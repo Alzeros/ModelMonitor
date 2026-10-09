@@ -1,8 +1,12 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
+  Cell,
+  LabelList,
   Legend,
   Line,
   LineChart,
@@ -35,6 +39,14 @@ const TOOLTIP_STYLE = {
   border: '1px solid hsl(var(--border))',
   borderRadius: 8,
   fontSize: 12,
+}
+
+/** 各时间范围的时间桶粒度（毫秒）：不同模型的探测时刻不同，聚合到同一时间轴折线才能对齐 */
+const BUCKET_MS: Record<RangeKey, number> = {
+  '1h': 2 * 60_000,
+  '6h': 10 * 60_000,
+  '24h': 3_600_000,
+  '7d': 6 * 3_600_000,
 }
 
 export function DashboardPage() {
@@ -74,20 +86,43 @@ export function DashboardPage() {
         })
         setSummaries(sm)
 
-        const map = new Map<string, Row>()
+        // 按时间桶聚合：同桶内取各模型的平均值，让多模型的折线在时间轴上对齐
+        const bucketMs = BUCKET_MS[range]
+        type Acc = { t: number; sums: Record<string, { s: number; c: number }> }
+        const acc = new Map<number, Acc>()
         probeRes.forEach((pr, i) => {
           const id = ids[i]
           for (const p of pr.items) {
-            let row = map.get(p.created_at)
+            if (p.valid === 0) continue
+            const t = Math.floor(new Date(p.created_at).getTime() / bucketMs) * bucketMs
+            let row = acc.get(t)
             if (!row) {
-              row = { time: p.created_at }
-              map.set(p.created_at, row)
+              row = { t, sums: {} }
+              acc.set(t, row)
             }
-            if (p.tps != null) row[`tps_${id}`] = p.tps
-            if (p.ttft_ms != null) row[`ttft_${id}`] = p.ttft_ms
+            const pairs = [
+              [`tps_${id}`, p.tps],
+              [`ttft_${id}`, p.ttft_ms],
+            ] as const
+            for (const [k, v] of pairs) {
+              if (v == null) continue
+              const s = row.sums[k] ?? { s: 0, c: 0 }
+              s.s += v
+              s.c += 1
+              row.sums[k] = s
+            }
           }
         })
-        setRows([...map.values()].sort((a, b) => a.time.localeCompare(b.time)))
+        const nextRows: Row[] = [...acc.values()]
+          .sort((a, b) => a.t - b.t)
+          .map((row) => {
+            const out: Row = { time: new Date(row.t).toISOString() }
+            for (const [k, v] of Object.entries(row.sums)) {
+              out[k] = Math.round((v.s / v.c) * 100) / 100
+            }
+            return out
+          })
+        setRows(nextRows)
       } catch (e) {
         toast.error(`加载失败：${(e as Error).message}`)
       } finally {
@@ -114,7 +149,7 @@ export function DashboardPage() {
       try {
         const r = await api.probeModel(id)
         if (r.status === 'ok') {
-          toast.success(`探测成功：${fmtTps(r.tps)} tokens/s，首字 ${fmtMs(r.ttft_ms)}`)
+          toast.success(`探测成功：${fmtTps(r.tps)} tok/s，首字 ${fmtMs(r.ttft_ms)}`)
         } else {
           toast.error(
             `探测失败（${ERROR_TYPE_LABELS[r.error_type ?? ''] ?? r.error_type}）：${r.error_message}`
@@ -134,6 +169,19 @@ export function DashboardPage() {
     [load]
   )
 
+  /** 模型对比数据：取各模型最近一次有效探测的输出速度，降序排列 */
+  const compareData = useMemo(() => {
+    const list: { name: string; tps: number; color: string }[] = []
+    models.forEach((m, i) => {
+      const l = m.latest
+      if (l && l.status === 'ok' && l.valid === 1 && l.tps != null) {
+        list.push({ name: m.model, tps: l.tps, color: colorForIndex(i) })
+      }
+    })
+    return list.sort((a, b) => b.tps - a.tps)
+  }, [models])
+
+  const hasCompare = compareData.length > 0
   const hasOkData = rows.length > 0
 
   return (
@@ -160,10 +208,13 @@ export function DashboardPage() {
       </div>
 
       {loading ? (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-44 rounded-xl" />
-          ))}
+        <div className="space-y-4">
+          <Skeleton className="h-64 rounded-xl" />
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {[0, 1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-40 rounded-xl" />
+            ))}
+          </div>
         </div>
       ) : models.length === 0 ? (
         <Card>
@@ -177,219 +228,260 @@ export function DashboardPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {models.map((m) => {
-            const latest = m.latest ?? summaries[m.id]?.latest ?? null
-            const stats = summaries[m.id]?.stats
-            const isProbing = probing.has(m.id)
-            return (
-              <Card key={m.id} className={cn('gap-4', !m.enabled && 'opacity-60')}>
-                <CardHeader className="pb-1">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span
-                      className={cn(
-                        'size-2 shrink-0 rounded-full',
-                        latest?.status === 'ok' && 'bg-emerald-500',
-                        latest?.status === 'error' && 'bg-red-500',
-                        !latest && 'bg-muted-foreground/40'
-                      )}
+        <>
+          {/* 模型对比：横向条形图，一眼看出谁快谁慢 */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">模型对比 · 最新输出速度（tok/s）</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {hasCompare ? (
+                <ResponsiveContainer width="100%" height={Math.max(200, compareData.length * 34 + 40)}>
+                  <BarChart data={compareData} layout="vertical" margin={{ top: 4, right: 56, bottom: 0, left: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" horizontal={false} />
+                    <XAxis
+                      type="number"
+                      tick={{ fontSize: 11 }}
+                      stroke="hsl(var(--muted-foreground))"
                     />
-                    <CardTitle className="truncate font-mono text-base">{m.model}</CardTitle>
-                    {!m.enabled || !m.provider_enabled ? (
-                      <Badge variant="secondary" className="shrink-0">
-                        <PauseCircle className="size-3" />
-                        {!m.provider_enabled ? '供应商已停用' : '已停用'}
-                      </Badge>
-                    ) : null}
-                  </div>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {m.provider_name} · {m.base_url}
-                  </p>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {latest ? (
-                    latest.status === 'ok' ? (
-                      <div>
-                        <div className="flex items-baseline gap-1.5">
-                          {latest.valid === 0 ? (
-                            <Badge variant="outline" className="border-amber-500/50 text-amber-600 dark:text-amber-400">
-                              测量异常
-                            </Badge>
-                          ) : (
-                            <>
-                              <span className="text-3xl font-semibold tabular-nums">
-                                {fmtTps(latest.tps)}
-                              </span>
-                              <span className="text-sm text-muted-foreground">输出 tok/s</span>
-                              {latest.estimated === 1 ? (
-                                <Badge variant="secondary" className="text-[10px]">
-                                  估算
-                                </Badge>
-                              ) : null}
-                            </>
-                          )}
-                        </div>
-                        <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                          <span className="flex items-center gap-1">
-                            <Timer className="size-3" />首字 {fmtMs(latest.ttft_ms)}
-                          </span>
-                          <span>总耗时 {fmtMs(latest.total_ms)}</span>
-                          <span>可见 {latest.content_tokens} tok</span>
-                        </div>
-                        {latest.reasoning_tokens && latest.reasoning_tokens > 0 ? (
-                          <p className="mt-1 text-xs text-amber-600 dark:text-amber-400" title="思考阶段：token 数 / 速度 / 耗时">
-                            思考 {latest.reasoning_tokens} tok · {fmtTps(latest.reasoning_tps)} tok/s · {fmtMs(latest.reasoning_ms)}
-                          </p>
-                        ) : null}
-                      </div>
-                    ) : (
-                      <div className="min-h-[52px] text-sm">
-                        <span className="font-medium text-destructive">
-                          {ERROR_TYPE_LABELS[latest.error_type ?? ''] ?? latest.error_type ?? '失败'}
-                        </span>
-                        <span className="ml-1 break-all text-muted-foreground" title={latest.error_message ?? ''}>
-                          {latest.error_message}
-                        </span>
-                      </div>
-                    )
-                  ) : (
-                    <div className="min-h-[52px] text-sm text-muted-foreground">暂无探测数据</div>
-                  )}
+                    <YAxis
+                      type="category"
+                      dataKey="name"
+                      width={150}
+                      tick={{ fontSize: 11 }}
+                      stroke="hsl(var(--muted-foreground))"
+                    />
+                    <Tooltip
+                      contentStyle={TOOLTIP_STYLE}
+                      formatter={(v: number) => [`${fmtTps(v)} tok/s`, '输出速度']}
+                      cursor={{ fill: 'hsl(var(--accent))', opacity: 0.35 }}
+                    />
+                    <Bar dataKey="tps" radius={[0, 4, 4, 0]} maxBarSize={22}>
+                      {compareData.map((d) => (
+                        <Cell key={d.name} fill={d.color} />
+                      ))}
+                      <LabelList
+                        dataKey="tps"
+                        position="right"
+                        formatter={(v: number) => fmtTps(v)}
+                        style={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+                      />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex h-[120px] items-center justify-center text-sm text-muted-foreground">
+                  暂无有效的探测数据，等待定时探测或手动探测
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
-                  <div className="flex items-center justify-between gap-2 border-t pt-2 text-xs text-muted-foreground">
-                    <span className="truncate">
-                      {timeAgo(latest?.created_at)} · 每 {m.interval_minutes} 分钟
-                      {stats && stats.total > 0
-                        ? ` · ${range}成功率 ${stats.success_rate ?? 0}%`
-                        : ''}
-                    </span>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="size-7"
-                      title="立即探测"
-                      disabled={isProbing}
-                      onClick={() => void probeOne(m.id)}
-                    >
-                      {isProbing ? (
-                        <Loader2 className="size-3.5 animate-spin" />
+          {/* 卡片墙（紧凑） */}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+            {models.map((m) => {
+              const latest = m.latest ?? summaries[m.id]?.latest ?? null
+              const stats = summaries[m.id]?.stats
+              const isProbing = probing.has(m.id)
+              return (
+                <Card key={m.id} className={cn('gap-3', !m.enabled && 'opacity-60')}>
+                  <CardHeader className="pb-1">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span
+                        className={cn(
+                          'size-2 shrink-0 rounded-full',
+                          latest?.status === 'ok' && 'bg-emerald-500',
+                          latest?.status === 'error' && 'bg-red-500',
+                          !latest && 'bg-muted-foreground/40'
+                        )}
+                      />
+                      <CardTitle className="truncate font-mono text-sm">{m.model}</CardTitle>
+                      {!m.enabled || !m.provider_enabled ? (
+                        <Badge variant="secondary" className="shrink-0">
+                          <PauseCircle className="size-3" />
+                          {!m.provider_enabled ? '供应商停用' : '已停用'}
+                        </Badge>
+                      ) : null}
+                    </div>
+                    <p className="truncate text-xs text-muted-foreground">{m.provider_name}</p>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {latest ? (
+                      latest.status === 'ok' ? (
+                        <div>
+                          <div className="flex items-baseline gap-1.5">
+                            {latest.valid === 0 ? (
+                              <Badge
+                                variant="outline"
+                                className="border-amber-500/50 text-amber-600 dark:text-amber-400"
+                                title="测量异常（输出阶段过短或 tps 超限），已排除出统计"
+                              >
+                                测量异常
+                              </Badge>
+                            ) : (
+                              <>
+                                <span className="text-2xl font-semibold tabular-nums">
+                                  {fmtTps(latest.tps)}
+                                </span>
+                                <span className="text-xs text-muted-foreground">输出 tok/s</span>
+                                {latest.estimated === 1 ? (
+                                  <Badge variant="secondary" className="text-[10px]">
+                                    估算
+                                  </Badge>
+                                ) : null}
+                              </>
+                            )}
+                          </div>
+                          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                            <span className="flex items-center gap-1">
+                              <Timer className="size-3" />首字 {fmtMs(latest.ttft_ms)}
+                            </span>
+                            <span>总耗时 {fmtMs(latest.total_ms)}</span>
+                            <span>可见 {latest.content_tokens} tok</span>
+                          </div>
+                          {latest.reasoning_tokens && latest.reasoning_tokens > 0 ? (
+                            <p
+                              className="text-xs text-amber-600 dark:text-amber-400"
+                              title="思考阶段：token 数 / 速度 / 耗时"
+                            >
+                              思考 {latest.reasoning_tokens} tok · {fmtTps(latest.reasoning_tps)} tok/s ·{' '}
+                              {fmtMs(latest.reasoning_ms)}
+                            </p>
+                          ) : null}
+                        </div>
                       ) : (
-                        <Play className="size-3.5" />
-                      )}
-                    </Button>
-                  </div>
+                        <div className="min-h-[44px] text-sm">
+                          <span className="font-medium text-destructive">
+                            {ERROR_TYPE_LABELS[latest.error_type ?? ''] ?? latest.error_type ?? '失败'}
+                          </span>
+                          <span
+                            className="ml-1 break-all text-muted-foreground"
+                            title={latest.error_message ?? ''}
+                          >
+                            {latest.error_message}
+                          </span>
+                        </div>
+                      )
+                    ) : (
+                      <div className="min-h-[44px] text-sm text-muted-foreground">暂无探测数据</div>
+                    )}
+
+                    <div className="flex items-center justify-between gap-2 border-t pt-2 text-xs text-muted-foreground">
+                      <span className="truncate">
+                        {timeAgo(latest?.created_at)} · 每 {m.interval_minutes} 分钟
+                        {stats && stats.total > 0 ? ` · ${range}成功率 ${stats.success_rate ?? 0}%` : ''}
+                      </span>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="size-7"
+                        title="立即探测"
+                        disabled={isProbing}
+                        onClick={() => void probeOne(m.id)}
+                      >
+                        {isProbing ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Play className="size-3.5" />
+                        )}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              )
+            })}
+          </div>
+
+          {/* 趋势图 */}
+          {hasOkData ? (
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">输出速度趋势（tok/s）</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ResponsiveContainer width="100%" height={280}>
+                    <LineChart data={rows} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                      <XAxis
+                        dataKey="time"
+                        tickFormatter={(v: string) => fmtTimeTick(v, range)}
+                        minTickGap={48}
+                        tick={{ fontSize: 11 }}
+                        stroke="hsl(var(--muted-foreground))"
+                      />
+                      <YAxis tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" width={48} />
+                      <Tooltip
+                        contentStyle={TOOLTIP_STYLE}
+                        labelFormatter={(v) => fmtTimeTick(String(v), range)}
+                      />
+                      <Legend wrapperStyle={{ fontSize: 11 }} iconSize={10} />
+                      {models.map((m, i) => (
+                        <Line
+                          key={m.id}
+                          type="monotone"
+                          dataKey={`tps_${m.id}`}
+                          name={m.model}
+                          stroke={colorForIndex(i)}
+                          strokeWidth={2}
+                          dot={false}
+                          connectNulls
+                        />
+                      ))}
+                    </LineChart>
+                  </ResponsiveContainer>
                 </CardContent>
               </Card>
-            )
-          })}
-        </div>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">首字时间趋势（TTFT）</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ResponsiveContainer width="100%" height={280}>
+                    <LineChart data={rows} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                      <XAxis
+                        dataKey="time"
+                        tickFormatter={(v: string) => fmtTimeTick(v, range)}
+                        minTickGap={48}
+                        tick={{ fontSize: 11 }}
+                        stroke="hsl(var(--muted-foreground))"
+                      />
+                      <YAxis
+                        tick={{ fontSize: 11 }}
+                        stroke="hsl(var(--muted-foreground))"
+                        width={48}
+                        tickFormatter={(v: number) =>
+                          v >= 1000 ? `${Math.round(v / 100) / 10}s` : `${v}ms`
+                        }
+                      />
+                      <Tooltip
+                        contentStyle={TOOLTIP_STYLE}
+                        labelFormatter={(v) => fmtTimeTick(String(v), range)}
+                        formatter={(value) => [fmtMs(Number(value)), undefined]}
+                      />
+                      <Legend wrapperStyle={{ fontSize: 11 }} iconSize={10} />
+                      {models.map((m, i) => (
+                        <Line
+                          key={m.id}
+                          type="monotone"
+                          dataKey={`ttft_${m.id}`}
+                          name={m.model}
+                          stroke={colorForIndex(i)}
+                          strokeWidth={2}
+                          dot={false}
+                          connectNulls
+                        />
+                      ))}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
+            </div>
+          ) : null}
+        </>
       )}
-
-      {!loading && models.length > 0 ? (
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">输出速度趋势（tokens/s）</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {hasOkData ? (
-                <ResponsiveContainer width="100%" height={280}>
-                  <LineChart data={rows} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis
-                      dataKey="time"
-                      tickFormatter={(v: string) => fmtTimeTick(v, range)}
-                      minTickGap={48}
-                      tick={{ fontSize: 11 }}
-                      stroke="hsl(var(--muted-foreground))"
-                    />
-                    <YAxis
-                      tick={{ fontSize: 11 }}
-                      stroke="hsl(var(--muted-foreground))"
-                      width={48}
-                    />
-                    <Tooltip
-                      contentStyle={TOOLTIP_STYLE}
-                      labelFormatter={(v) => fmtTimeTick(String(v), range)}
-                    />
-                    <Legend wrapperStyle={{ fontSize: 12 }} />
-                    {models.map((m, i) => (
-                      <Line
-                        key={m.id}
-                        type="monotone"
-                        dataKey={`tps_${m.id}`}
-                        name={m.model}
-                        stroke={colorForIndex(i)}
-                        strokeWidth={2}
-                        dot={false}
-                        connectNulls
-                      />
-                    ))}
-                  </LineChart>
-                </ResponsiveContainer>
-              ) : (
-                <EmptyChart />
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">首字时间趋势（TTFT）</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {hasOkData ? (
-                <ResponsiveContainer width="100%" height={280}>
-                  <LineChart data={rows} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis
-                      dataKey="time"
-                      tickFormatter={(v: string) => fmtTimeTick(v, range)}
-                      minTickGap={48}
-                      tick={{ fontSize: 11 }}
-                      stroke="hsl(var(--muted-foreground))"
-                    />
-                    <YAxis
-                      tick={{ fontSize: 11 }}
-                      stroke="hsl(var(--muted-foreground))"
-                      width={48}
-                      tickFormatter={(v: number) => (v >= 1000 ? `${Math.round(v / 100) / 10}s` : `${v}ms`)}
-                    />
-                    <Tooltip
-                      contentStyle={TOOLTIP_STYLE}
-                      labelFormatter={(v) => fmtTimeTick(String(v), range)}
-                      formatter={(value) => [fmtMs(Number(value)), undefined]}
-                    />
-                    <Legend wrapperStyle={{ fontSize: 12 }} />
-                    {models.map((m, i) => (
-                      <Line
-                        key={m.id}
-                        type="monotone"
-                        dataKey={`ttft_${m.id}`}
-                        name={m.model}
-                        stroke={colorForIndex(i)}
-                        strokeWidth={2}
-                        dot={false}
-                        connectNulls
-                      />
-                    ))}
-                  </LineChart>
-                </ResponsiveContainer>
-              ) : (
-                <EmptyChart />
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-function EmptyChart() {
-  return (
-    <div className="flex h-[280px] items-center justify-center text-sm text-muted-foreground">
-      暂无成功的探测数据，等待定时探测产生结果
     </div>
   )
 }
