@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { Loader2, Pencil, Play, Plus, Trash2 } from 'lucide-react'
+import { ListPlus, Loader2, Pencil, Play, Plus, Trash2 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { fmtMs, fmtTps, timeAgo } from '@/lib/format'
 import {
@@ -111,6 +111,9 @@ export function ModelsPage() {
   const [testResult, setTestResult] = useState<ProbeResult | null>(null)
   const [probingIds, setProbingIds] = useState<Set<number>>(new Set())
   const [deleting, setDeleting] = useState<Model | null>(null)
+  const [modelList, setModelList] = useState<string[] | null>(null)
+  const [loadingModels, setLoadingModels] = useState(false)
+  const [modelListError, setModelListError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -136,6 +139,8 @@ export function ModelsPage() {
     setEditing(null)
     setForm(emptyForm(settings?.default_interval_minutes))
     setTestResult(null)
+    setModelList(null)
+    setModelListError(null)
     setOpen(true)
   }
 
@@ -143,7 +148,28 @@ export function ModelsPage() {
     setEditing(m)
     setForm(toForm(m))
     setTestResult(null)
+    setModelList(null)
+    setModelListError(null)
     setOpen(true)
+  }
+
+  const fetchModelList = async () => {
+    if (!/^https?:\/\//i.test(form.base_url.trim())) {
+      toast.error('请先填写正确的 Base URL')
+      return
+    }
+    setLoadingModels(true)
+    setModelListError(null)
+    setModelList(null)
+    try {
+      const r = await api.listRemoteModels({ base_url: form.base_url.trim(), api_key: form.api_key })
+      setModelList(r.items)
+      if (!r.items.length) setModelListError('服务返回了空列表')
+    } catch (e) {
+      setModelListError((e as Error).message)
+    } finally {
+      setLoadingModels(false)
+    }
   }
 
   const buildBody = (): ModelInput | null => {
@@ -420,12 +446,49 @@ export function ModelsPage() {
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="f-model">模型 ID *</Label>
-                <Input
-                  id="f-model"
-                  value={form.model}
-                  onChange={(e) => setField('model', e.target.value)}
-                  placeholder="如 deepseek-chat"
-                />
+                <div className="flex gap-2">
+                  <Input
+                    id="f-model"
+                    value={form.model}
+                    onChange={(e) => setField('model', e.target.value)}
+                    placeholder="如 deepseek-chat"
+                    className="font-mono"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="shrink-0"
+                    disabled={loadingModels || !form.base_url.trim()}
+                    title={form.base_url.trim() ? '从该服务获取可用模型列表' : '请先填写 Base URL'}
+                    onClick={() => void fetchModelList()}
+                  >
+                    {loadingModels ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <ListPlus className="size-4" />
+                    )}
+                    获取列表
+                  </Button>
+                </div>
+                {modelListError ? (
+                  <p className="text-xs break-all text-destructive">{modelListError}</p>
+                ) : null}
+                {modelList && modelList.length > 0 ? (
+                  <div className="flex max-h-40 flex-wrap gap-1 overflow-y-auto rounded-md border p-2">
+                    {modelList.map((id) => (
+                      <Button
+                        key={id}
+                        type="button"
+                        size="sm"
+                        variant={form.model === id ? 'default' : 'outline'}
+                        className="h-7 font-mono text-xs"
+                        onClick={() => setField('model', id)}
+                      >
+                        {id}
+                      </Button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             </div>
 

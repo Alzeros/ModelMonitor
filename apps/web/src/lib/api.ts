@@ -48,6 +48,9 @@ export const api = {
   probeTest: (body: { base_url: string; api_key: string; model: string; prompt?: string; max_tokens?: number; timeout_ms?: number }) =>
     request<ProbeResult>('/probe-test', { method: 'POST', body: JSON.stringify(body) }),
 
+  listRemoteModels: (body: { base_url: string; api_key: string }) =>
+    request<{ items: string[]; url: string }>('/models-list', { method: 'POST', body: JSON.stringify(body) }),
+
   modelSummary: (id: number, range: RangeKey) =>
     request<Summary>(`/models/${id}/summary?range=${range}`),
 

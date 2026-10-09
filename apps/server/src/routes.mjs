@@ -80,6 +80,12 @@ function percentile(sorted, p) {
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
 }
 
+/** 由 base_url 计算模型列表地址；与 prober.buildChatUrl 同样兼容误粘贴完整接口地址 */
+function buildModelsUrl(base) {
+  const b = String(base).trim().replace(/\/+$/, '').replace(/\/chat\/completions$/i, '');
+  return `${b}/models`;
+}
+
 function round2(n) {
   return n == null ? null : Math.round(n * 100) / 100;
 }
@@ -166,6 +172,59 @@ export async function registerRoutes(app) {
       timeout_ms: toInt(b.timeout_ms, 30000, 1000, 600000),
     };
     return await probeModel(cfg, { persist: false });
+  });
+
+  // 拉取供应商可用模型列表（OpenAI 兼容 GET {base}/models）
+  app.post('/api/models-list', async (req, reply) => {
+    const b = req.body ?? {};
+    const base = typeof b.base_url === 'string' ? b.base_url.trim() : '';
+    if (!/^https?:\/\//i.test(base)) {
+      return reply.code(400).send({ error: 'Base URL 必填且以 http(s):// 开头' });
+    }
+    const key = typeof b.api_key === 'string' ? b.api_key : '';
+    const candidates = [buildModelsUrl(base)];
+    if (!candidates[0].includes('/v1/')) {
+      candidates.push(candidates[0].replace(/\/models$/i, '/v1/models'));
+    }
+    let lastUrl = candidates[0];
+    let res;
+    try {
+      for (const url of candidates) {
+        lastUrl = url;
+        res = await fetch(url, {
+          headers: key ? { Authorization: `Bearer ${key}` } : {},
+          signal: AbortSignal.timeout(15000),
+        });
+        if (res.status === 404 || res.status === 405) continue;
+        break;
+      }
+    } catch (err) {
+      const cause = err?.cause?.code ?? err?.cause?.message;
+      return reply.code(502).send({ error: `网络错误 @ ${lastUrl}${cause ? ` (${cause})` : ''}` });
+    }
+    if (!res.ok) {
+      const bodyText = await res.text().catch(() => '');
+      const msg = `HTTP ${res.status} ${res.statusText} @ ${lastUrl}${bodyText ? `: ${bodyText.slice(0, 300)}` : ''}`;
+      return reply.code(res.status === 401 || res.status === 403 ? 401 : 502).send({ error: msg });
+    }
+    const ct = res.headers.get('content-type') ?? '';
+    if (!ct.includes('json')) {
+      const bodyText = await res.text().catch(() => '');
+      return reply.code(502).send({ error: `响应不是 JSON @ ${lastUrl}: ${bodyText.slice(0, 200)}` });
+    }
+    const data = await res.json().catch(() => null);
+    let items = [];
+    if (Array.isArray(data)) items = data;
+    else if (Array.isArray(data?.data)) items = data.data;
+    else if (Array.isArray(data?.models)) items = data.models;
+    if (!items.length) {
+      return reply.code(502).send({ error: `未在响应中找到模型列表 @ ${lastUrl}` });
+    }
+    const ids = items
+      .map((m) => (typeof m === 'string' ? m : m?.id ?? m?.name ?? ''))
+      .filter((s) => typeof s === 'string' && s)
+      .sort((a, b) => a.localeCompare(b));
+    return { items: [...new Set(ids)], url: lastUrl };
   });
 
   // ---------- 指标 ----------
