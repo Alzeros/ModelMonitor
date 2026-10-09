@@ -6,6 +6,7 @@ import { fmtDateTime, fmtMs, fmtTps } from '@/lib/format'
 import {
   ERROR_TYPE_LABELS,
   RANGE_OPTIONS,
+  modelName,
   type ModelRow,
   type ProbesResponse,
   type RangeKey,
@@ -102,7 +103,7 @@ export function RecordsPage() {
                 <SelectItem value="all">全部模型</SelectItem>
                 {models.map((m) => (
                   <SelectItem key={m.id} value={String(m.id)}>
-                    {m.provider_name} / {m.model}
+                    {m.provider_name} / {modelName(m)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -190,10 +191,15 @@ export function RecordsPage() {
                     <TableCell className="text-sm">
                       {p.model_id != null ? (
                         <>
-                          <div className="font-mono">
-                            {modelMap.get(p.model_id)?.model ?? p.model_id}
+                          <div className={modelMap.get(p.model_id)?.display_name ? '' : 'font-mono'}>
+                            {modelMap.get(p.model_id)
+                              ? modelName(modelMap.get(p.model_id)!)
+                              : p.model_id}
                           </div>
                           <div className="text-xs text-muted-foreground">
+                            {modelMap.get(p.model_id)?.display_name
+                              ? `${modelMap.get(p.model_id)!.model} · `
+                              : ''}
                             {modelMap.get(p.model_id)?.provider_name}
                           </div>
                         </>

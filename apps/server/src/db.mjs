@@ -47,6 +47,7 @@ function migrate() {
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           provider_id INTEGER NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
           model TEXT NOT NULL,
+          display_name TEXT NOT NULL DEFAULT '',
           enabled INTEGER NOT NULL DEFAULT 1,
           created_at TEXT NOT NULL,
           UNIQUE(provider_id, model)
@@ -93,6 +94,7 @@ function migrate() {
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           provider_id INTEGER NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
           model TEXT NOT NULL,
+          display_name TEXT NOT NULL DEFAULT '',
           enabled INTEGER NOT NULL DEFAULT 1,
           thinking_strength TEXT NOT NULL DEFAULT 'default',
           created_at TEXT NOT NULL,
@@ -148,6 +150,9 @@ migrate();
   const mcols = db.prepare('PRAGMA table_info(models)').all().map((c) => c.name);
   if (mcols.length && !mcols.includes('thinking_strength')) {
     db.exec("ALTER TABLE models ADD COLUMN thinking_strength TEXT NOT NULL DEFAULT 'default'");
+  }
+  if (mcols.length && !mcols.includes('display_name')) {
+    db.exec("ALTER TABLE models ADD COLUMN display_name TEXT NOT NULL DEFAULT ''");
   }
   const rcols = db.prepare('PRAGMA table_info(probe_results)').all().map((c) => c.name);
   if (rcols.length) {
@@ -218,7 +223,7 @@ export function deleteProvider(id) {
 export function listModelsView() {
   return db
     .prepare(
-      `SELECT m.id, m.provider_id, m.model, m.enabled, m.thinking_strength, m.created_at,
+      `SELECT m.id, m.provider_id, m.model, m.display_name, m.enabled, m.thinking_strength, m.created_at,
               p.name AS provider_name, p.base_url, p.enabled AS provider_enabled, p.interval_minutes
        FROM models m JOIN providers p ON p.id = m.provider_id
        ORDER BY p.id, m.id`
@@ -242,14 +247,16 @@ export function getModelConfig(id) {
     .get(id);
 }
 
-export function addModel(providerId, model, thinkingStrength = 'default') {
+export function addModel(providerId, model, thinkingStrength = 'default', displayName = '') {
   const info = db
-    .prepare('INSERT INTO models (provider_id, model, enabled, thinking_strength, created_at) VALUES (?, ?, 1, ?, ?)')
-    .run(providerId, model, thinkingStrength, new Date().toISOString());
+    .prepare(
+      'INSERT INTO models (provider_id, model, display_name, enabled, thinking_strength, created_at) VALUES (?, ?, ?, 1, ?, ?)'
+    )
+    .run(providerId, model, displayName, thinkingStrength, new Date().toISOString());
   return getModelRow(info.lastInsertRowid);
 }
 
-const MODEL_FIELDS = ['enabled', 'thinking_strength'];
+const MODEL_FIELDS = ['display_name', 'enabled', 'thinking_strength'];
 
 export function updateModel(id, patch) {
   const sets = [];

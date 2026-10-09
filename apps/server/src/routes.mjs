@@ -166,11 +166,13 @@ export async function registerRoutes(app) {
     const names = [...new Set(list.map((s) => String(s).trim()).filter(Boolean))];
     if (!names.length) return reply.code(400).send({ error: '模型 ID 不能为空' });
     const thinking = normalizeThinking(req.body?.thinking_strength);
+    // 显示名称仅对单模型添加生效（批量时忽略，添加后可单独改名）
+    const displayName = names.length === 1 ? String(req.body?.display_name ?? '').trim().slice(0, 50) : '';
     let added = 0;
     const skipped = [];
     for (const model of names) {
       try {
-        addModel(provider.id, model, thinking);
+        addModel(provider.id, model, thinking, displayName);
         added += 1;
       } catch {
         skipped.push(model); // UNIQUE(provider_id, model) 冲突 = 已存在
@@ -186,7 +188,8 @@ export async function registerRoutes(app) {
     const patch = {};
     if (req.body?.enabled !== undefined) patch.enabled = Boolean(req.body.enabled);
     if (req.body?.thinking_strength !== undefined) patch.thinking_strength = normalizeThinking(req.body.thinking_strength);
-    if (!Object.keys(patch).length) return reply.code(400).send({ error: '无有效字段（enabled / thinking_strength）' });
+    if (req.body?.display_name !== undefined) patch.display_name = String(req.body.display_name).trim().slice(0, 50);
+    if (!Object.keys(patch).length) return reply.code(400).send({ error: '无有效字段（enabled / thinking_strength / display_name）' });
     const model = updateModel(row.id, patch);
     reloadScheduler();
     return model;

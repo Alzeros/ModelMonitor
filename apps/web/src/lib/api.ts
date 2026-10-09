@@ -42,12 +42,16 @@ export const api = {
 
   // 模型（供应商之下）
   listModels: () => request<ModelsResponse>('/models'),
-  addProviderModels: (providerId: number, models: string[], thinkingStrength = 'default') =>
+  addProviderModels: (providerId: number, models: string[], thinkingStrength = 'default', displayName?: string) =>
     request<{ added: number; skipped: string[] }>(`/providers/${providerId}/models`, {
       method: 'POST',
-      body: JSON.stringify({ models, thinking_strength: thinkingStrength }),
+      body: JSON.stringify({
+        models,
+        thinking_strength: thinkingStrength,
+        ...(displayName?.trim() ? { display_name: displayName.trim() } : {}),
+      }),
     }),
-  updateModel: (id: number, patch: { enabled?: boolean; thinking_strength?: string }) =>
+  updateModel: (id: number, patch: { enabled?: boolean; thinking_strength?: string; display_name?: string }) =>
     request<ModelRow>(`/models/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
   deleteModel: (id: number) => request<{ ok: boolean }>(`/models/${id}`, { method: 'DELETE' }),
 

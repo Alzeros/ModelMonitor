@@ -21,6 +21,7 @@ import { colorForIndex, fmtMs, fmtTps, fmtTimeTick, timeAgo } from '@/lib/format
 import {
   ERROR_TYPE_LABELS,
   RANGE_OPTIONS,
+  modelName,
   type ModelWithLatest,
   type RangeKey,
   type Summary,
@@ -175,7 +176,7 @@ export function DashboardPage() {
     models.forEach((m, i) => {
       const l = m.latest
       if (l && l.status === 'ok' && l.valid === 1 && l.tps != null) {
-        list.push({ name: m.model, tps: l.tps, color: colorForIndex(i) })
+        list.push({ name: modelName(m), tps: l.tps, color: colorForIndex(i) })
       }
     })
     return list.sort((a, b) => b.tps - a.tps)
@@ -295,7 +296,12 @@ export function DashboardPage() {
                           !latest && 'bg-muted-foreground/40'
                         )}
                       />
-                      <CardTitle className="truncate font-mono text-sm">{m.model}</CardTitle>
+                      <CardTitle
+                        className={cn('truncate text-sm', m.display_name ? '' : 'font-mono')}
+                        title={m.display_name ? m.model : undefined}
+                      >
+                        {modelName(m)}
+                      </CardTitle>
                       {!m.enabled || !m.provider_enabled ? (
                         <Badge variant="secondary" className="shrink-0">
                           <PauseCircle className="size-3" />
@@ -421,7 +427,7 @@ export function DashboardPage() {
                           key={m.id}
                           type="monotone"
                           dataKey={`tps_${m.id}`}
-                          name={m.model}
+                          name={modelName(m)}
                           stroke={colorForIndex(i)}
                           strokeWidth={2}
                           dot={false}
@@ -467,7 +473,7 @@ export function DashboardPage() {
                           key={m.id}
                           type="monotone"
                           dataKey={`ttft_${m.id}`}
-                          name={m.model}
+                          name={modelName(m)}
                           stroke={colorForIndex(i)}
                           strokeWidth={2}
                           dot={false}

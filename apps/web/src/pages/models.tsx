@@ -5,6 +5,7 @@ import { api } from '@/lib/api'
 import { fmtMs, fmtTps, timeAgo } from '@/lib/format'
 import {
   ERROR_TYPE_LABELS,
+  modelName,
   type ModelRow,
   type ModelWithLatest,
   type Provider,
@@ -130,6 +131,7 @@ export function ModelsPage() {
   const [addOpen, setAddOpen] = useState(false)
   const [addFor, setAddFor] = useState<Provider | null>(null)
   const [manualModel, setManualModel] = useState('')
+  const [addDisplayName, setAddDisplayName] = useState('')
   const [remoteList, setRemoteList] = useState<string[] | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loadingList, setLoadingList] = useState(false)
@@ -141,6 +143,11 @@ export function ModelsPage() {
   const [probingIds, setProbingIds] = useState<Set<number>>(new Set())
   const [deletingModel, setDeletingModel] = useState<ModelRow | null>(null)
   const [deletingProvider, setDeletingProvider] = useState<Provider | null>(null)
+
+  // 模型显示名称（改名）
+  const [renameModel, setRenameModel] = useState<ModelRow | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [savingName, setSavingName] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -257,6 +264,7 @@ export function ModelsPage() {
   const openAddModels = (p: Provider) => {
     setAddFor(p)
     setManualModel('')
+    setAddDisplayName('')
     setRemoteList(null)
     setSelected(new Set())
     setListError(null)
@@ -295,7 +303,12 @@ export function ModelsPage() {
     if (!addFor || !pendingModels.length) return
     setAddingModels(true)
     try {
-      const r = await api.addProviderModels(addFor.id, pendingModels, addThinking)
+      const r = await api.addProviderModels(
+        addFor.id,
+        pendingModels,
+        addThinking,
+        pendingModels.length === 1 ? addDisplayName : undefined
+      )
       toast.success(
         `已添加 ${r.added} 个模型${r.skipped.length ? `，跳过已存在：${r.skipped.join('、')}` : ''}`
       )
@@ -355,11 +368,34 @@ export function ModelsPage() {
     if (!deletingModel) return
     try {
       await api.deleteModel(deletingModel.id)
-      toast.success(`已删除模型「${deletingModel.model}」`)
+      toast.success(`已删除模型「${modelName(deletingModel)}」`)
       setDeletingModel(null)
       await load()
     } catch (e) {
       toast.error((e as Error).message)
+    }
+  }
+
+  // ---------- 模型显示名称 ----------
+
+  const openRename = (m: ModelRow) => {
+    setRenameModel(m)
+    setRenameValue(m.display_name)
+  }
+
+  const saveRename = async () => {
+    if (!renameModel) return
+    const name = renameValue.trim()
+    setSavingName(true)
+    try {
+      await api.updateModel(renameModel.id, { display_name: name })
+      toast.success(name ? `显示名称已设为「${name}」` : '已恢复显示默认模型 ID')
+      setRenameModel(null)
+      await load()
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally {
+      setSavingName(false)
     }
   }
 
@@ -453,7 +489,7 @@ export function ModelsPage() {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>模型 ID</TableHead>
+                          <TableHead>模型</TableHead>
                           <TableHead>最新 TPS</TableHead>
                           <TableHead className="hidden sm:table-cell">首字</TableHead>
                           <TableHead className="hidden md:table-cell">上次探测</TableHead>
@@ -465,7 +501,34 @@ export function ModelsPage() {
                       <TableBody>
                         {pModels.map((m) => (
                           <TableRow key={m.id}>
-                            <TableCell className="font-mono text-sm">{m.model}</TableCell>
+                            <TableCell className="max-w-[220px] text-sm">
+                              <div className="flex items-center gap-1">
+                                <span
+                                  className={cn(
+                                    'truncate',
+                                    m.display_name ? '' : 'font-mono',
+                                    m.enabled === 0 || m.provider_enabled === 0 ? 'text-muted-foreground' : ''
+                                  )}
+                                  title={m.display_name ? m.model : undefined}
+                                >
+                                  {modelName(m)}
+                                </span>
+                                {m.display_name ? (
+                                  <span className="hidden shrink-0 font-mono text-xs text-muted-foreground lg:inline">
+                                    {m.model}
+                                  </span>
+                                ) : null}
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="size-6 shrink-0 text-muted-foreground hover:text-foreground"
+                                  title="修改显示名称"
+                                  onClick={() => openRename(m)}
+                                >
+                                  <Pencil className="size-3" />
+                                </Button>
+                              </div>
+                            </TableCell>
                             <TableCell>
                               {m.latest?.status === 'ok' ? (
                                 m.latest.valid === 0 ? (
@@ -495,7 +558,7 @@ export function ModelsPage() {
                               <Switch
                                 checked={m.enabled === 1}
                                 onCheckedChange={(v) => void toggleModelEnabled(m, v)}
-                                aria-label={`启用 ${m.model}`}
+                                aria-label={`启用 ${modelName(m)}`}
                               />
                             </TableCell>
                             <TableCell>
@@ -503,7 +566,7 @@ export function ModelsPage() {
                                 value={m.thinking_strength}
                                 onValueChange={(v) => void setModelThinking(m, v)}
                               >
-                                <SelectTrigger className="h-8 w-[84px] text-xs" aria-label={`思考强度 ${m.model}`}>
+                                <SelectTrigger className="h-8 w-[84px] text-xs" aria-label={`思考强度 ${modelName(m)}`}>
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -522,7 +585,7 @@ export function ModelsPage() {
                                   className="size-8"
                                   title="立即探测"
                                   disabled={probingIds.has(m.id)}
-                                  onClick={() => void probeOne(m.id, m.model)}
+                                  onClick={() => void probeOne(m.id, modelName(m))}
                                 >
                                   {probingIds.has(m.id) ? (
                                     <Loader2 className="size-4 animate-spin" />
@@ -786,6 +849,19 @@ export function ModelsPage() {
               </p>
             ) : null}
 
+            {pendingModels.length === 1 ? (
+              <div className="grid gap-2">
+                <Label htmlFor="m-display">显示名称（可选）</Label>
+                <Input
+                  id="m-display"
+                  value={addDisplayName}
+                  onChange={(e) => setAddDisplayName(e.target.value)}
+                  placeholder={`留空则显示 ${pendingModels[0]}`}
+                  maxLength={50}
+                />
+              </div>
+            ) : null}
+
             <div className="grid gap-2">
               <Label>思考强度（批量应用到本次添加的模型）</Label>
               <Select
@@ -823,13 +899,47 @@ export function ModelsPage() {
         </DialogContent>
       </Dialog>
 
+      {/* 修改模型显示名称 */}
+      <Dialog open={renameModel !== null} onOpenChange={(v) => !v && setRenameModel(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>显示名称</DialogTitle>
+            <DialogDescription className="font-mono break-all">
+              {renameModel?.model}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2">
+            <Label htmlFor="m-rename">名称（留空恢复默认）</Label>
+            <Input
+              id="m-rename"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              placeholder={renameModel?.model}
+              maxLength={50}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !savingName) void saveRename()
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setRenameModel(null)}>
+              取消
+            </Button>
+            <Button disabled={savingName} onClick={() => void saveRename()}>
+              {savingName ? <Loader2 className="size-4 animate-spin" /> : null}
+              保存
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* 删除模型确认 */}
       <AlertDialog open={deletingModel !== null} onOpenChange={(v) => !v && setDeletingModel(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>删除模型？</AlertDialogTitle>
             <AlertDialogDescription>
-              将删除「{deletingModel?.model}」及其全部探测记录，此操作不可撤销。
+              将删除「{deletingModel ? modelName(deletingModel) : ''}」及其全部探测记录，此操作不可撤销。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

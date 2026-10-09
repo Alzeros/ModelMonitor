@@ -40,6 +40,8 @@ export interface ModelRow {
   id: number
   provider_id: number
   model: string
+  /** 显示名称，空串 = 显示默认模型 ID */
+  display_name: string
   enabled: number
   thinking_strength: string
   created_at: string
@@ -106,6 +108,10 @@ export interface ProbesResponse {
 export interface ModelsResponse {
   items: ModelWithLatest[]
 }
+
+/** 模型显示名：自定义名优先，否则显示模型 ID */
+export const modelName = (m: { display_name?: string | null; model: string }): string =>
+  m.display_name?.trim() || m.model
 
 export interface ListProbesParams {
   model_id?: number | null
