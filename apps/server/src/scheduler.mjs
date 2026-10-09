@@ -1,4 +1,4 @@
-import { getModel, listModels } from './db.mjs';
+import { getModelConfig, listModelsView } from './db.mjs';
 import { probeModel } from './prober.mjs';
 
 /** model_id -> { startTimer, tickTimer } */
@@ -20,14 +20,14 @@ export function stopScheduler() {
   timers.clear();
 }
 
-/** 按当前 models 表重建全部定时探测任务（增删改模型后调用） */
+/** 按当前 供应商+模型 配置重建全部定时探测任务（任何增删改后调用） */
 export function reloadScheduler() {
   stopScheduler();
-  for (const model of listModels()) {
-    if (!model.enabled) continue;
-    const id = model.id;
-    const minutes = Math.min(10080, Math.max(1, Math.round(Number(model.interval_minutes) || 30)));
-    // 启动时随机延迟错峰，避免同时打所有模型
+  for (const m of listModelsView()) {
+    if (!m.enabled || !m.provider_enabled) continue;
+    const id = m.id;
+    const minutes = Math.min(10080, Math.max(1, Math.round(Number(m.interval_minutes) || 30)));
+    // 启动时随机延迟错峰，避免同时打所有供应商
     const startTimer = setTimeout(() => {
       const tickTimer = setInterval(() => {
         void triggerProbe(id);
@@ -40,16 +40,16 @@ export function reloadScheduler() {
 }
 
 /**
- * 触发一次探测（带并发防重入）。仅在模型存在且启用时执行。
+ * 触发一次探测（带并发防重入）。仅在模型与供应商均启用时执行。
  * 手动探测请用 runManualProbe。
  */
 export async function triggerProbe(id) {
   if (running.has(id)) return null;
-  const model = getModel(id);
-  if (!model || !model.enabled) return null;
+  const cfg = getModelConfig(id);
+  if (!cfg || !cfg.enabled || !cfg.provider_enabled) return null;
   running.add(id);
   try {
-    return await probeModel(model);
+    return await probeModel(cfg);
   } finally {
     running.delete(id);
   }
@@ -58,11 +58,11 @@ export async function triggerProbe(id) {
 /** 手动探测：绕过 enabled 限制，但同样防重入 */
 export async function runManualProbe(id) {
   if (running.has(id)) return { error: 'probe_running' };
-  const model = getModel(id);
-  if (!model) return { error: 'not_found' };
+  const cfg = getModelConfig(id);
+  if (!cfg) return { error: 'not_found' };
   running.add(id);
   try {
-    return await probeModel(model);
+    return await probeModel(cfg);
   } finally {
     running.delete(id);
   }

@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { ListPlus, Loader2, Pencil, Play, Plus, Trash2 } from 'lucide-react'
+import { Check, ListPlus, Loader2, Pencil, Play, Plus, Trash2 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { fmtMs, fmtTps, timeAgo } from '@/lib/format'
 import {
   ERROR_TYPE_LABELS,
-  type Model,
-  type ModelInput,
+  type ModelRow,
   type ModelWithLatest,
-  type ProbeResult,
+  type Provider,
+  type ProviderInput,
   type Settings,
 } from '@/lib/types'
 import {
@@ -26,7 +26,6 @@ import { Button } from '@/components/ui/button'
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
@@ -50,6 +49,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
+import { cn } from '@/lib/utils'
 
 const DEFAULT_PROMPT = 'Say "hello" and nothing else.'
 
@@ -59,11 +59,16 @@ function buildChatUrl(base: string): string {
   return `${b}/chat/completions`
 }
 
-interface FormState {
+function numOr(v: string, def: number, min: number, max: number): number {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return def
+  return Math.min(max, Math.max(min, Math.round(n)))
+}
+
+interface ProviderFormState {
   name: string
   base_url: string
   api_key: string
-  model: string
   prompt: string
   max_tokens: string
   timeout_ms: string
@@ -71,12 +76,11 @@ interface FormState {
   enabled: boolean
 }
 
-function emptyForm(defaultInterval?: string): FormState {
+function emptyProviderForm(defaultInterval?: string): ProviderFormState {
   return {
     name: '',
     base_url: '',
     api_key: '',
-    model: '',
     prompt: DEFAULT_PROMPT,
     max_tokens: '256',
     timeout_ms: '60000',
@@ -85,40 +89,57 @@ function emptyForm(defaultInterval?: string): FormState {
   }
 }
 
-function toForm(m: Model): FormState {
+function toProviderForm(p: Provider): ProviderFormState {
   return {
-    name: m.name,
-    base_url: m.base_url,
-    api_key: m.api_key,
-    model: m.model,
-    prompt: m.prompt,
-    max_tokens: String(m.max_tokens),
-    timeout_ms: String(m.timeout_ms),
-    interval_minutes: String(m.interval_minutes),
-    enabled: m.enabled === 1,
+    name: p.name,
+    base_url: p.base_url,
+    api_key: p.api_key,
+    prompt: p.prompt,
+    max_tokens: String(p.max_tokens),
+    timeout_ms: String(p.timeout_ms),
+    interval_minutes: String(p.interval_minutes),
+    enabled: p.enabled === 1,
   }
 }
 
 export function ModelsPage() {
+  const [providers, setProviders] = useState<Provider[]>([])
   const [models, setModels] = useState<ModelWithLatest[]>([])
   const [settings, setSettings] = useState<Settings | null>(null)
   const [loading, setLoading] = useState(true)
-  const [open, setOpen] = useState(false)
-  const [editing, setEditing] = useState<Model | null>(null)
-  const [form, setForm] = useState<FormState>(emptyForm())
-  const [saving, setSaving] = useState(false)
+
+  // 供应商新增/编辑对话框
+  const [provOpen, setProvOpen] = useState(false)
+  const [editingProvider, setEditingProvider] = useState<Provider | null>(null)
+  const [pform, setPform] = useState<ProviderFormState>(emptyProviderForm())
+  const [savingProvider, setSavingProvider] = useState(false)
   const [testing, setTesting] = useState(false)
-  const [testResult, setTestResult] = useState<ProbeResult | null>(null)
+  const [testResult, setTestResult] = useState<{ ok: boolean; count?: number; message?: string } | null>(null)
+
+  // 添加模型对话框
+  const [addOpen, setAddOpen] = useState(false)
+  const [addFor, setAddFor] = useState<Provider | null>(null)
+  const [manualModel, setManualModel] = useState('')
+  const [remoteList, setRemoteList] = useState<string[] | null>(null)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [loadingList, setLoadingList] = useState(false)
+  const [listError, setListError] = useState<string | null>(null)
+  const [addingModels, setAddingModels] = useState(false)
+
+  // 探测与删除
   const [probingIds, setProbingIds] = useState<Set<number>>(new Set())
-  const [deleting, setDeleting] = useState<Model | null>(null)
-  const [modelList, setModelList] = useState<string[] | null>(null)
-  const [loadingModels, setLoadingModels] = useState(false)
-  const [modelListError, setModelListError] = useState<string | null>(null)
+  const [deletingModel, setDeletingModel] = useState<ModelRow | null>(null)
+  const [deletingProvider, setDeletingProvider] = useState<Provider | null>(null)
 
   const load = useCallback(async () => {
     try {
-      const [{ items }, s] = await Promise.all([api.listModels(), api.getSettings()])
-      setModels(items)
+      const [{ items: ps }, { items: ms }, s] = await Promise.all([
+        api.listProviders(),
+        api.listModels(),
+        api.getSettings(),
+      ])
+      setProviders(ps)
+      setModels(ms)
       setSettings(s)
     } catch (e) {
       toast.error(`加载失败：${(e as Error).message}`)
@@ -131,141 +152,157 @@ export function ModelsPage() {
     void load()
   }, [load])
 
-  const setField = <K extends keyof FormState>(key: K, value: FormState[K]) => {
-    setForm((prev) => ({ ...prev, [key]: value }))
+  const setField = <K extends keyof ProviderFormState>(key: K, value: ProviderFormState[K]) => {
+    setPform((prev) => ({ ...prev, [key]: value }))
   }
 
-  const openCreate = () => {
-    setEditing(null)
-    setForm(emptyForm(settings?.default_interval_minutes))
+  // ---------- 供应商 ----------
+
+  const openCreateProvider = () => {
+    setEditingProvider(null)
+    setPform(emptyProviderForm(settings?.default_interval_minutes))
     setTestResult(null)
-    setModelList(null)
-    setModelListError(null)
-    setOpen(true)
+    setProvOpen(true)
   }
 
-  const openEdit = (m: Model) => {
-    setEditing(m)
-    setForm(toForm(m))
+  const openEditProvider = (p: Provider) => {
+    setEditingProvider(p)
+    setPform(toProviderForm(p))
     setTestResult(null)
-    setModelList(null)
-    setModelListError(null)
-    setOpen(true)
+    setProvOpen(true)
   }
 
-  const fetchModelList = async () => {
-    if (!/^https?:\/\//i.test(form.base_url.trim())) {
-      toast.error('请先填写正确的 Base URL')
-      return
-    }
-    setLoadingModels(true)
-    setModelListError(null)
-    setModelList(null)
-    try {
-      const r = await api.listRemoteModels({ base_url: form.base_url.trim(), api_key: form.api_key })
-      setModelList(r.items)
-      if (!r.items.length) setModelListError('服务返回了空列表')
-    } catch (e) {
-      setModelListError((e as Error).message)
-    } finally {
-      setLoadingModels(false)
-    }
-  }
-
-  const buildBody = (): ModelInput | null => {
-    if (!form.name.trim()) {
+  const buildProviderBody = (): ProviderInput | null => {
+    if (!pform.name.trim()) {
       toast.error('请填写名称')
       return null
     }
-    if (!/^https?:\/\//i.test(form.base_url.trim())) {
+    if (!/^https?:\/\//i.test(pform.base_url.trim())) {
       toast.error('Base URL 必须以 http(s):// 开头')
       return null
     }
-    if (!form.model.trim()) {
-      toast.error('请填写模型 ID')
-      return null
-    }
     return {
-      name: form.name.trim(),
-      base_url: form.base_url.trim(),
-      api_key: form.api_key,
-      model: form.model.trim(),
-      prompt: form.prompt.trim() || DEFAULT_PROMPT,
-      max_tokens: Math.max(1, Number(form.max_tokens) || 256),
-      timeout_ms: Math.min(600000, Math.max(1000, Number(form.timeout_ms) || 60000)),
-      interval_minutes: Math.min(10080, Math.max(1, Number(form.interval_minutes) || 30)),
-      enabled: form.enabled,
+      name: pform.name.trim(),
+      base_url: pform.base_url.trim(),
+      api_key: pform.api_key,
+      prompt: pform.prompt.trim() || DEFAULT_PROMPT,
+      max_tokens: numOr(pform.max_tokens, 256, 1, 65536),
+      timeout_ms: numOr(pform.timeout_ms, 60000, 1000, 600000),
+      interval_minutes: numOr(pform.interval_minutes, 30, 1, 10080),
+      enabled: pform.enabled,
     }
   }
 
-  const save = async () => {
-    const body = buildBody()
+  const saveProvider = async () => {
+    const body = buildProviderBody()
     if (!body) return
-    setSaving(true)
+    setSavingProvider(true)
     try {
-      if (editing) {
-        await api.updateModel(editing.id, body)
-        toast.success('模型已更新')
+      if (editingProvider) {
+        await api.updateProvider(editingProvider.id, body)
+        toast.success('供应商已更新')
       } else {
-        await api.createModel(body)
-        toast.success('模型已添加')
+        await api.createProvider(body)
+        toast.success('供应商已添加')
       }
-      setOpen(false)
+      setProvOpen(false)
       await load()
     } catch (e) {
       toast.error((e as Error).message)
     } finally {
-      setSaving(false)
+      setSavingProvider(false)
     }
   }
 
-  const testConnection = async () => {
-    if (!/^https?:\/\//i.test(form.base_url.trim())) {
-      toast.error('Base URL 必须以 http(s):// 开头')
-      return
-    }
-    if (!form.model.trim()) {
-      toast.error('请填写模型 ID')
+  const testProvider = async () => {
+    if (!/^https?:\/\//i.test(pform.base_url.trim())) {
+      toast.error('请先填写正确的 Base URL')
       return
     }
     setTesting(true)
     setTestResult(null)
     try {
-      const r = await api.probeTest({
-        base_url: form.base_url.trim(),
-        api_key: form.api_key,
-        model: form.model.trim(),
-        prompt: form.prompt.trim() || undefined,
-        max_tokens: Math.max(1, Number(form.max_tokens) || 64),
-        timeout_ms: Math.min(600000, Math.max(1000, Number(form.timeout_ms) || 30000)),
-      })
-      setTestResult(r)
+      const r = await api.listRemoteModels({ base_url: pform.base_url.trim(), api_key: pform.api_key })
+      setTestResult({ ok: true, count: r.items.length })
     } catch (e) {
-      setTestResult({
-        model_id: null,
-        status: 'error',
-        ttft_ms: null,
-        total_ms: null,
-        completion_tokens: null,
-        estimated: 0,
-        tps: null,
-        avg_tps: null,
-        prompt_tokens: null,
-        error_type: 'request',
-        error_message: (e as Error).message,
-        created_at: new Date().toISOString(),
-      })
+      setTestResult({ ok: false, message: (e as Error).message })
     } finally {
       setTesting(false)
     }
   }
 
-  const probeOne = async (id: number) => {
+  const toggleProviderEnabled = async (p: Provider, enabled: boolean) => {
+    try {
+      await api.updateProvider(p.id, { enabled })
+      await load()
+    } catch (e) {
+      toast.error((e as Error).message)
+    }
+  }
+
+  // ---------- 添加模型 ----------
+
+  const openAddModels = (p: Provider) => {
+    setAddFor(p)
+    setManualModel('')
+    setRemoteList(null)
+    setSelected(new Set())
+    setListError(null)
+    setAddOpen(true)
+  }
+
+  const fetchRemoteList = async () => {
+    if (!addFor) return
+    setLoadingList(true)
+    setListError(null)
+    setRemoteList(null)
+    try {
+      const r = await api.listRemoteModels({ base_url: addFor.base_url, api_key: addFor.api_key })
+      setRemoteList(r.items)
+      if (!r.items.length) setListError('服务返回了空列表')
+    } catch (e) {
+      setListError((e as Error).message)
+    } finally {
+      setLoadingList(false)
+    }
+  }
+
+  const toggleSelect = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const pendingModels = [...new Set([...selected, manualModel.trim()].filter(Boolean))]
+
+  const saveAddModels = async () => {
+    if (!addFor || !pendingModels.length) return
+    setAddingModels(true)
+    try {
+      const r = await api.addProviderModels(addFor.id, pendingModels)
+      toast.success(
+        `已添加 ${r.added} 个模型${r.skipped.length ? `，跳过已存在：${r.skipped.join('、')}` : ''}`
+      )
+      setAddOpen(false)
+      await load()
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally {
+      setAddingModels(false)
+    }
+  }
+
+  // ---------- 模型操作 ----------
+
+  const probeOne = async (id: number, name: string) => {
     setProbingIds((prev) => new Set(prev).add(id))
     try {
       const r = await api.probeModel(id)
       if (r.status === 'ok') {
-        toast.success(`${models.find((m) => m.id === id)?.name ?? ''}：${fmtTps(r.tps)} tokens/s，首字 ${fmtMs(r.ttft_ms)}`)
+        toast.success(`${name}：${fmtTps(r.tps)} tokens/s，首字 ${fmtMs(r.ttft_ms)}`)
       } else {
         toast.error(
           `探测失败（${ERROR_TYPE_LABELS[r.error_type ?? ''] ?? r.error_type}）：${r.error_message}`
@@ -283,26 +320,40 @@ export function ModelsPage() {
     }
   }
 
-  const toggleEnabled = async (m: ModelWithLatest, enabled: boolean) => {
+  const toggleModelEnabled = async (m: ModelWithLatest, enabled: boolean) => {
     try {
-      await api.updateModel(m.id, { enabled })
+      await api.updateModelEnabled(m.id, enabled)
       await load()
     } catch (e) {
       toast.error((e as Error).message)
     }
   }
 
-  const confirmDelete = async () => {
-    if (!deleting) return
+  const confirmDeleteModel = async () => {
+    if (!deletingModel) return
     try {
-      await api.deleteModel(deleting.id)
-      toast.success(`已删除「${deleting.name}」`)
-      setDeleting(null)
+      await api.deleteModel(deletingModel.id)
+      toast.success(`已删除模型「${deletingModel.model}」`)
+      setDeletingModel(null)
       await load()
     } catch (e) {
       toast.error((e as Error).message)
     }
   }
+
+  const confirmDeleteProvider = async () => {
+    if (!deletingProvider) return
+    try {
+      await api.deleteProvider(deletingProvider.id)
+      toast.success(`已删除供应商「${deletingProvider.name}」及其模型与记录`)
+      setDeletingProvider(null)
+      await load()
+    } catch (e) {
+      toast.error((e as Error).message)
+    }
+  }
+
+  const modelCountOf = (p: Provider) => models.filter((m) => m.provider_id === p.id).length
 
   return (
     <div className="space-y-6">
@@ -310,201 +361,191 @@ export function ModelsPage() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">模型管理</h1>
           <p className="text-sm text-muted-foreground">
-            添加 OpenAI 兼容接入点（/v1/chat/completions），平台将按间隔定时探测
+            供应商（OpenAI 兼容接入点）→ 模型；探测参数跟随供应商，模型可批量添加
           </p>
         </div>
-        <Button onClick={openCreate}>
-          <Plus className="size-4" /> 添加模型
+        <Button onClick={openCreateProvider}>
+          <Plus className="size-4" /> 添加供应商
         </Button>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">已接入模型</CardTitle>
-          <CardDescription>共 {models.length} 个</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="py-8 text-center text-sm text-muted-foreground">加载中…</div>
-          ) : models.length === 0 ? (
-            <div className="py-8 text-center text-sm text-muted-foreground">
-              暂无模型，点击右上角「添加模型」开始
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>名称</TableHead>
-                  <TableHead className="hidden md:table-cell">Base URL</TableHead>
-                  <TableHead>间隔</TableHead>
-                  <TableHead>启用</TableHead>
-                  <TableHead>最新 TPS</TableHead>
-                  <TableHead className="hidden sm:table-cell">首字</TableHead>
-                  <TableHead className="hidden lg:table-cell">上次探测</TableHead>
-                  <TableHead className="text-right">操作</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {models.map((m) => (
-                  <TableRow key={m.id}>
-                    <TableCell>
-                      <div className="font-medium">{m.name}</div>
-                      <div className="font-mono text-xs text-muted-foreground">{m.model}</div>
-                    </TableCell>
-                    <TableCell className="hidden max-w-[240px] truncate font-mono text-xs text-muted-foreground md:table-cell">
-                      {m.base_url}
-                    </TableCell>
-                    <TableCell className="text-sm">{m.interval_minutes} 分</TableCell>
-                    <TableCell>
+      {loading ? (
+        <div className="py-8 text-center text-sm text-muted-foreground">加载中…</div>
+      ) : providers.length === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+            <p className="text-sm text-muted-foreground">还没有添加任何供应商</p>
+            <Button onClick={openCreateProvider}>
+              <Plus className="size-4" /> 添加供应商
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-4">
+          {providers.map((p) => {
+            const pModels = models.filter((m) => m.provider_id === p.id)
+            return (
+              <Card key={p.id} className={cn('gap-4', !p.enabled && 'opacity-60')}>
+                <CardHeader>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <CardTitle className="text-base">{p.name}</CardTitle>
+                    <Badge variant="outline" className="text-xs">
+                      每 {p.interval_minutes} 分钟
+                    </Badge>
+                    <div className="ml-auto flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">启用</span>
                       <Switch
-                        checked={m.enabled === 1}
-                        onCheckedChange={(v) => void toggleEnabled(m, v)}
-                        aria-label={`启用 ${m.name}`}
+                        checked={p.enabled === 1}
+                        onCheckedChange={(v) => void toggleProviderEnabled(p, v)}
+                        aria-label={`启用 ${p.name}`}
                       />
-                    </TableCell>
-                    <TableCell>
-                      {m.latest?.status === 'ok' ? (
-                        <span className="font-medium tabular-nums">{fmtTps(m.latest.tps)}</span>
-                      ) : m.latest?.status === 'error' ? (
-                        <Badge variant="destructive" title={m.latest.error_message ?? ''}>
-                          {ERROR_TYPE_LABELS[m.latest.error_type ?? ''] ?? '失败'}
-                        </Badge>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="hidden text-sm tabular-nums sm:table-cell">
-                      {fmtMs(m.latest?.ttft_ms)}
-                    </TableCell>
-                    <TableCell className="hidden text-sm text-muted-foreground lg:table-cell">
-                      {timeAgo(m.latest?.created_at)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="size-8"
-                          title="立即探测"
-                          disabled={probingIds.has(m.id)}
-                          onClick={() => void probeOne(m.id)}
-                        >
-                          {probingIds.has(m.id) ? (
-                            <Loader2 className="size-4 animate-spin" />
-                          ) : (
-                            <Play className="size-4" />
-                          )}
-                        </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="size-8"
-                          title="编辑"
-                          onClick={() => openEdit(m)}
-                        >
-                          <Pencil className="size-4" />
-                        </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="size-8 text-destructive hover:text-destructive"
-                          title="删除"
-                          onClick={() => setDeleting(m)}
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="size-8"
+                        title="编辑供应商"
+                        onClick={() => openEditProvider(p)}
+                      >
+                        <Pencil className="size-4" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="size-8 text-destructive hover:text-destructive"
+                        title="删除供应商"
+                        onClick={() => setDeletingProvider(p)}
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </div>
+                  </div>
+                  <p className="truncate font-mono text-xs text-muted-foreground">{p.base_url}</p>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {pModels.length === 0 ? (
+                    <p className="py-2 text-sm text-muted-foreground">
+                      暂无模型，点击下方「添加模型」（支持从服务获取列表批量添加）
+                    </p>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>模型 ID</TableHead>
+                          <TableHead>最新 TPS</TableHead>
+                          <TableHead className="hidden sm:table-cell">首字</TableHead>
+                          <TableHead className="hidden md:table-cell">上次探测</TableHead>
+                          <TableHead>启用</TableHead>
+                          <TableHead className="text-right">操作</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {pModels.map((m) => (
+                          <TableRow key={m.id}>
+                            <TableCell className="font-mono text-sm">{m.model}</TableCell>
+                            <TableCell>
+                              {m.latest?.status === 'ok' ? (
+                                <span className="font-medium tabular-nums">
+                                  {fmtTps(m.latest.tps)}
+                                </span>
+                              ) : m.latest?.status === 'error' ? (
+                                <Badge variant="destructive" title={m.latest.error_message ?? ''}>
+                                  {ERROR_TYPE_LABELS[m.latest.error_type ?? ''] ?? '失败'}
+                                </Badge>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="hidden text-sm tabular-nums sm:table-cell">
+                              {fmtMs(m.latest?.ttft_ms)}
+                            </TableCell>
+                            <TableCell className="hidden text-sm text-muted-foreground md:table-cell">
+                              {timeAgo(m.latest?.created_at)}
+                            </TableCell>
+                            <TableCell>
+                              <Switch
+                                checked={m.enabled === 1}
+                                onCheckedChange={(v) => void toggleModelEnabled(m, v)}
+                                aria-label={`启用 ${m.model}`}
+                              />
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex justify-end gap-1">
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="size-8"
+                                  title="立即探测"
+                                  disabled={probingIds.has(m.id)}
+                                  onClick={() => void probeOne(m.id, m.model)}
+                                >
+                                  {probingIds.has(m.id) ? (
+                                    <Loader2 className="size-4 animate-spin" />
+                                  ) : (
+                                    <Play className="size-4" />
+                                  )}
+                                </Button>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="size-8 text-destructive hover:text-destructive"
+                                  title="删除模型"
+                                  onClick={() => setDeletingModel(m)}
+                                >
+                                  <Trash2 className="size-4" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                  <div className="flex justify-end">
+                    <Button variant="outline" size="sm" onClick={() => openAddModels(p)}>
+                      <Plus className="size-4" /> 添加模型
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )
+          })}
+        </div>
+      )}
 
-      {/* 新增 / 编辑对话框 */}
-      <Dialog open={open} onOpenChange={setOpen}>
+      {/* 供应商新增/编辑对话框 */}
+      <Dialog open={provOpen} onOpenChange={setProvOpen}>
         <DialogContent className="max-h-[90svh] max-w-xl overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{editing ? '编辑模型' : '添加模型'}</DialogTitle>
+            <DialogTitle>{editingProvider ? '编辑供应商' : '添加供应商'}</DialogTitle>
             <DialogDescription>
-              填写 OpenAI 兼容接口信息，保存后按间隔自动探测
+              填写 OpenAI 兼容接口信息，保存后在其下添加要监控的模型
             </DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
-                <Label htmlFor="f-name">名称 *</Label>
-                <Input
-                  id="f-name"
-                  value={form.name}
-                  onChange={(e) => setField('name', e.target.value)}
-                  placeholder="如 DeepSeek 官方"
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="f-model">模型 ID *</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="f-model"
-                    value={form.model}
-                    onChange={(e) => setField('model', e.target.value)}
-                    placeholder="如 deepseek-chat"
-                    className="font-mono"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="shrink-0"
-                    disabled={loadingModels || !form.base_url.trim()}
-                    title={form.base_url.trim() ? '从该服务获取可用模型列表' : '请先填写 Base URL'}
-                    onClick={() => void fetchModelList()}
-                  >
-                    {loadingModels ? (
-                      <Loader2 className="size-4 animate-spin" />
-                    ) : (
-                      <ListPlus className="size-4" />
-                    )}
-                    获取列表
-                  </Button>
-                </div>
-                {modelListError ? (
-                  <p className="text-xs break-all text-destructive">{modelListError}</p>
-                ) : null}
-                {modelList && modelList.length > 0 ? (
-                  <div className="flex max-h-40 flex-wrap gap-1 overflow-y-auto rounded-md border p-2">
-                    {modelList.map((id) => (
-                      <Button
-                        key={id}
-                        type="button"
-                        size="sm"
-                        variant={form.model === id ? 'default' : 'outline'}
-                        className="h-7 font-mono text-xs"
-                        onClick={() => setField('model', id)}
-                      >
-                        {id}
-                      </Button>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
+            <div className="grid gap-2">
+              <Label htmlFor="p-name">名称 *</Label>
+              <Input
+                id="p-name"
+                value={pform.name}
+                onChange={(e) => setField('name', e.target.value)}
+                placeholder="如自建模型服务"
+              />
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="f-url">Base URL *</Label>
+              <Label htmlFor="p-url">Base URL *</Label>
               <Input
-                id="f-url"
-                value={form.base_url}
+                id="p-url"
+                value={pform.base_url}
                 onChange={(e) => setField('base_url', e.target.value)}
                 placeholder="https://api.example.com/v1"
               />
               <p className="text-xs break-all text-muted-foreground">
                 实际请求{' '}
                 <code className="font-mono">
-                  {form.base_url.trim()
-                    ? buildChatUrl(form.base_url)
+                  {pform.base_url.trim()
+                    ? buildChatUrl(pform.base_url)
                     : '{Base URL}/chat/completions'}
                 </code>
                 （直接粘贴完整接口地址也能自动识别）
@@ -512,11 +553,11 @@ export function ModelsPage() {
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="f-key">API Key</Label>
+              <Label htmlFor="p-key">API Key</Label>
               <Input
-                id="f-key"
+                id="p-key"
                 type="password"
-                value={form.api_key}
+                value={pform.api_key}
                 onChange={(e) => setField('api_key', e.target.value)}
                 placeholder="本地服务可留空"
                 autoComplete="off"
@@ -524,44 +565,44 @@ export function ModelsPage() {
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="f-prompt">测试 Prompt</Label>
+              <Label htmlFor="p-prompt">测试 Prompt</Label>
               <Textarea
-                id="f-prompt"
+                id="p-prompt"
                 rows={2}
-                value={form.prompt}
+                value={pform.prompt}
                 onChange={(e) => setField('prompt', e.target.value)}
               />
             </div>
 
             <div className="grid grid-cols-3 gap-4">
               <div className="grid gap-2">
-                <Label htmlFor="f-max">max_tokens</Label>
+                <Label htmlFor="p-max">max_tokens</Label>
                 <Input
-                  id="f-max"
+                  id="p-max"
                   type="number"
                   min={1}
-                  value={form.max_tokens}
+                  value={pform.max_tokens}
                   onChange={(e) => setField('max_tokens', e.target.value)}
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="f-timeout">超时 (ms)</Label>
+                <Label htmlFor="p-timeout">超时 (ms)</Label>
                 <Input
-                  id="f-timeout"
+                  id="p-timeout"
                   type="number"
                   min={1000}
                   step={1000}
-                  value={form.timeout_ms}
+                  value={pform.timeout_ms}
                   onChange={(e) => setField('timeout_ms', e.target.value)}
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="f-interval">间隔 (分钟)</Label>
+                <Label htmlFor="p-interval">间隔 (分钟)</Label>
                 <Input
-                  id="f-interval"
+                  id="p-interval"
                   type="number"
                   min={1}
-                  value={form.interval_minutes}
+                  value={pform.interval_minutes}
                   onChange={(e) => setField('interval_minutes', e.target.value)}
                 />
               </div>
@@ -569,57 +610,141 @@ export function ModelsPage() {
 
             <div className="flex items-center justify-between rounded-lg border p-3">
               <div>
-                <Label htmlFor="f-enabled">启用定时探测</Label>
-                <p className="text-xs text-muted-foreground">停用后不再自动探测，仍可手动探测</p>
+                <Label htmlFor="p-enabled">启用定时探测</Label>
+                <p className="text-xs text-muted-foreground">
+                  停用后该供应商下所有模型不再自动探测
+                </p>
               </div>
               <Switch
-                id="f-enabled"
-                checked={form.enabled}
+                id="p-enabled"
+                checked={pform.enabled}
                 onCheckedChange={(v) => setField('enabled', v)}
               />
             </div>
 
             {testResult ? (
-              testResult.status === 'ok' ? (
+              testResult.ok ? (
                 <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm">
-                  连接成功 — {fmtTps(testResult.tps)} tokens/s · 首字 {fmtMs(testResult.ttft_ms)} ·
-                  总耗时 {fmtMs(testResult.total_ms)}
-                  {testResult.estimated === 1 ? '（token 数为估算值）' : ''}
+                  连接成功，共 {testResult.count ?? 0} 个可用模型
                 </div>
               ) : (
                 <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                  连接失败（
-                  {ERROR_TYPE_LABELS[testResult.error_type ?? ''] ?? testResult.error_type ?? '未知'}
-                  ）：{testResult.error_message}
+                  连接失败：{testResult.message}
                 </div>
               )
             ) : null}
           </div>
 
           <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" disabled={testing} onClick={() => void testConnection()}>
+            <Button variant="outline" disabled={testing} onClick={() => void testProvider()}>
               {testing ? <Loader2 className="size-4 animate-spin" /> : null}
               测试连接
             </Button>
-            <div className="flex-1 sm:hidden" />
-            <Button variant="ghost" onClick={() => setOpen(false)}>
+            <Button variant="ghost" onClick={() => setProvOpen(false)}>
               取消
             </Button>
-            <Button disabled={saving} onClick={() => void save()}>
-              {saving ? <Loader2 className="size-4 animate-spin" /> : null}
+            <Button disabled={savingProvider} onClick={() => void saveProvider()}>
+              {savingProvider ? <Loader2 className="size-4 animate-spin" /> : null}
               保存
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* 删除确认 */}
-      <AlertDialog open={deleting !== null} onOpenChange={(v) => !v && setDeleting(null)}>
+      {/* 添加模型对话框 */}
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>添加模型 — {addFor?.name}</DialogTitle>
+            <DialogDescription>手动输入模型 ID，或获取服务列表多选批量添加</DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4">
+            <div className="grid gap-2">
+              <Label htmlFor="m-model">模型 ID</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="m-model"
+                  value={manualModel}
+                  onChange={(e) => setManualModel(e.target.value)}
+                  placeholder="如 GLM-5.3-Flash"
+                  className="font-mono"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="shrink-0"
+                  disabled={loadingList}
+                  onClick={() => void fetchRemoteList()}
+                >
+                  {loadingList ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <ListPlus className="size-4" />
+                  )}
+                  获取列表
+                </Button>
+              </div>
+              {listError ? (
+                <p className="text-xs break-all text-destructive">{listError}</p>
+              ) : null}
+            </div>
+
+            {remoteList && remoteList.length > 0 ? (
+              <div className="grid gap-2">
+                <Label>
+                  可用模型（点击勾选，已选 {selected.size} 个）
+                </Label>
+                <div className="flex max-h-56 flex-wrap gap-1 overflow-y-auto rounded-md border p-2">
+                  {remoteList.map((id) => {
+                    const on = selected.has(id)
+                    return (
+                      <Button
+                        key={id}
+                        type="button"
+                        size="sm"
+                        variant={on ? 'default' : 'outline'}
+                        className="h-7 font-mono text-xs"
+                        onClick={() => toggleSelect(id)}
+                      >
+                        {on ? <Check className="mr-1 size-3" /> : null}
+                        {id}
+                      </Button>
+                    )
+                  })}
+                </div>
+              </div>
+            ) : null}
+
+            {pendingModels.length > 0 ? (
+              <p className="text-xs break-all text-muted-foreground">
+                保存时将添加 {pendingModels.length} 个：{pendingModels.join('、')}
+              </p>
+            ) : null}
+          </div>
+
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setAddOpen(false)}>
+              取消
+            </Button>
+            <Button
+              disabled={addingModels || pendingModels.length === 0}
+              onClick={() => void saveAddModels()}
+            >
+              {addingModels ? <Loader2 className="size-4 animate-spin" /> : null}
+              保存{pendingModels.length > 0 ? `（${pendingModels.length} 个）` : ''}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 删除模型确认 */}
+      <AlertDialog open={deletingModel !== null} onOpenChange={(v) => !v && setDeletingModel(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>删除模型？</AlertDialogTitle>
             <AlertDialogDescription>
-              将删除「{deleting?.name}」及其全部探测记录，此操作不可撤销。
+              将删除「{deletingModel?.model}」及其全部探测记录，此操作不可撤销。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -628,7 +753,35 @@ export function ModelsPage() {
               className="bg-destructive text-white hover:bg-destructive/90"
               onClick={(e) => {
                 e.preventDefault()
-                void confirmDelete()
+                void confirmDeleteModel()
+              }}
+            >
+              删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* 删除供应商确认 */}
+      <AlertDialog
+        open={deletingProvider !== null}
+        onOpenChange={(v) => !v && setDeletingProvider(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除供应商？</AlertDialogTitle>
+            <AlertDialogDescription>
+              将删除「{deletingProvider?.name}」及其 {deletingProvider ? modelCountOf(deletingProvider) : 0}{' '}
+              个模型与全部探测记录，此操作不可撤销。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              onClick={(e) => {
+                e.preventDefault()
+                void confirmDeleteProvider()
               }}
             >
               删除

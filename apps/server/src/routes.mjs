@@ -1,15 +1,21 @@
 import {
   DEFAULT_PROMPT,
-  createModel,
+  addModel,
+  createProvider,
   db,
   deleteModel,
-  getModel,
+  deleteProvider,
+  getModelConfig,
+  getModelRow,
+  getProvider,
   getSettings,
   latestProbe,
-  listModels,
+  listModelsView,
+  listProviders,
   listProbes,
   setSetting,
-  updateModel,
+  updateModelEnabled,
+  updateProvider,
 } from './db.mjs';
 import { probeModel } from './prober.mjs';
 import { reloadScheduler, runManualProbe } from './scheduler.mjs';
@@ -35,8 +41,8 @@ function normalizeBaseUrl(u) {
   return String(u).trim().replace(/\/+$/, '');
 }
 
-/** 全量校验并归一化模型字段（PUT 时先用现有记录 merge 再传入） */
-function parseModelBody(body, { requireName = true } = {}) {
+/** 全量校验并归一化供应商字段（PUT 时先用现有记录 merge 再传入） */
+function parseProviderBody(body, { requireName = true } = {}) {
   const b = body ?? {};
   const errors = [];
   const out = {};
@@ -58,9 +64,6 @@ function parseModelBody(body, { requireName = true } = {}) {
 
   out.api_key = typeof b.api_key === 'string' ? b.api_key : '';
 
-  if (typeof b.model === 'string' && b.model.trim()) out.model = b.model.trim();
-  else errors.push('模型 ID 必填');
-
   if (typeof b.prompt === 'string' && b.prompt.trim()) out.prompt = b.prompt;
   else out.prompt = DEFAULT_PROMPT;
 
@@ -72,18 +75,18 @@ function parseModelBody(body, { requireName = true } = {}) {
   return { out, errors };
 }
 
+/** 由 base_url 计算模型列表地址；与 prober.buildChatUrl 同样兼容误粘贴完整接口地址 */
+function buildModelsUrl(base) {
+  const b = String(base).trim().replace(/\/+$/, '').replace(/\/chat\/completions$/i, '');
+  return `${b}/models`;
+}
+
 function percentile(sorted, p) {
   if (!sorted.length) return null;
   const idx = (sorted.length - 1) * p;
   const lo = Math.floor(idx);
   const hi = Math.ceil(idx);
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
-}
-
-/** 由 base_url 计算模型列表地址；与 prober.buildChatUrl 同样兼容误粘贴完整接口地址 */
-function buildModelsUrl(base) {
-  const b = String(base).trim().replace(/\/+$/, '').replace(/\/chat\/completions$/i, '');
-  return `${b}/models`;
 }
 
 function round2(n) {
@@ -109,42 +112,79 @@ function summarize(rows) {
 }
 
 export async function registerRoutes(app) {
+  // ---------- 供应商 ----------
+  app.get('/api/providers', async () => ({ items: listProviders() }));
+
+  app.post('/api/providers', async (req, reply) => {
+    const { out, errors } = parseProviderBody(req.body);
+    if (errors.length) return reply.code(400).send({ errors });
+    return reply.code(201).send(createProvider(out));
+  });
+
+  app.put('/api/providers/:id', async (req, reply) => {
+    const id = Number(req.params.id);
+    const existing = getProvider(id);
+    if (!existing) return reply.code(404).send({ error: 'provider not found' });
+    const { out, errors } = parseProviderBody({ ...existing, ...req.body });
+    if (errors.length) return reply.code(400).send({ errors });
+    const provider = updateProvider(id, out);
+    reloadScheduler();
+    return provider;
+  });
+
+  app.delete('/api/providers/:id', async (req, reply) => {
+    const id = Number(req.params.id);
+    if (!getProvider(id)) return reply.code(404).send({ error: 'provider not found' });
+    deleteProvider(id); // 级联删除其模型与探测记录
+    reloadScheduler();
+    return { ok: true };
+  });
+
   // ---------- 模型 ----------
   app.get('/api/models', async () => {
-    const models = listModels().map((m) => ({ ...m, latest: latestProbe(m.id) }));
-    return { items: models };
+    const items = listModelsView().map((m) => ({ ...m, latest: latestProbe(m.id) }));
+    return { items };
   });
 
-  app.get('/api/models/:id', async (req, reply) => {
-    const model = getModel(Number(req.params.id));
-    if (!model) return reply.code(404).send({ error: 'model not found' });
-    return model;
-  });
-
-  app.post('/api/models', async (req, reply) => {
-    const { out, errors } = parseModelBody(req.body);
-    if (errors.length) return reply.code(400).send({ errors });
-    const model = createModel(out);
+  // 批量添加模型（单个或多个）：{ models: ["id1", "id2", ...] }
+  app.post('/api/providers/:id/models', async (req, reply) => {
+    const provider = getProvider(Number(req.params.id));
+    if (!provider) return reply.code(404).send({ error: 'provider not found' });
+    const raw = req.body?.models;
+    const list = Array.isArray(raw)
+      ? raw
+      : typeof raw === 'string' && raw.trim()
+        ? [raw]
+        : [];
+    const names = [...new Set(list.map((s) => String(s).trim()).filter(Boolean))];
+    if (!names.length) return reply.code(400).send({ error: '模型 ID 不能为空' });
+    let added = 0;
+    const skipped = [];
+    for (const model of names) {
+      try {
+        addModel(provider.id, model);
+        added += 1;
+      } catch {
+        skipped.push(model); // UNIQUE(provider_id, model) 冲突 = 已存在
+      }
+    }
     reloadScheduler();
-    return reply.code(201).send(model);
+    return { added, skipped };
   });
 
   app.put('/api/models/:id', async (req, reply) => {
-    const id = Number(req.params.id);
-    const existing = getModel(id);
-    if (!existing) return reply.code(404).send({ error: 'model not found' });
-    const { out, errors } = parseModelBody({ ...existing, ...req.body });
-    if (errors.length) return reply.code(400).send({ errors });
-    const model = updateModel(id, out);
+    const row = getModelRow(Number(req.params.id));
+    if (!row) return reply.code(404).send({ error: 'model not found' });
+    if (req.body?.enabled === undefined) return reply.code(400).send({ error: '仅支持更新 enabled' });
+    const model = updateModelEnabled(row.id, Boolean(req.body.enabled));
     reloadScheduler();
     return model;
   });
 
   app.delete('/api/models/:id', async (req, reply) => {
-    const id = Number(req.params.id);
-    const existing = getModel(id);
-    if (!existing) return reply.code(404).send({ error: 'model not found' });
-    deleteModel(id);
+    const row = getModelRow(Number(req.params.id));
+    if (!row) return reply.code(404).send({ error: 'model not found' });
+    deleteModel(row.id);
     reloadScheduler();
     return { ok: true };
   });
@@ -152,7 +192,7 @@ export async function registerRoutes(app) {
   // ---------- 探测 ----------
   app.post('/api/models/:id/probe', async (req, reply) => {
     const id = Number(req.params.id);
-    if (!getModel(id)) return reply.code(404).send({ error: 'model not found' });
+    if (!getModelRow(id)) return reply.code(404).send({ error: 'model not found' });
     const result = await runManualProbe(id);
     if (result?.error === 'probe_running') return reply.code(409).send({ error: '探测正在进行中，请稍后' });
     return result;
@@ -160,13 +200,16 @@ export async function registerRoutes(app) {
 
   app.post('/api/probe-test', async (req, reply) => {
     const b = req.body ?? {};
-    const { out, errors } = parseModelBody(b, { requireName: false });
+    const { out, errors } = parseProviderBody(b, { requireName: false });
     if (errors.length) return reply.code(400).send({ errors });
+    if (typeof b.model !== 'string' || !b.model.trim()) {
+      return reply.code(400).send({ errors: ['模型 ID 必填'] });
+    }
     const cfg = {
       id: null,
       base_url: out.base_url,
       api_key: out.api_key,
-      model: out.model,
+      model: b.model.trim(),
       prompt: out.prompt,
       max_tokens: toInt(b.max_tokens, 64, 1, 65536),
       timeout_ms: toInt(b.timeout_ms, 30000, 1000, 600000),
@@ -229,16 +272,16 @@ export async function registerRoutes(app) {
 
   // ---------- 指标 ----------
   app.get('/api/models/:id/summary', async (req, reply) => {
-    const model = getModel(Number(req.params.id));
-    if (!model) return reply.code(404).send({ error: 'model not found' });
+    const row = getModelRow(Number(req.params.id));
+    if (!row) return reply.code(404).send({ error: 'model not found' });
     const range = String(req.query.range ?? '24h');
     const ms = RANGE_MS[range];
     if (!ms) return reply.code(400).send({ error: `range 必须是 ${Object.keys(RANGE_MS).join('/')}` });
     const since = new Date(Date.now() - ms).toISOString();
     const rows = db
       .prepare('SELECT * FROM probe_results WHERE model_id = ? AND created_at >= ? ORDER BY created_at ASC')
-      .all(model.id, since);
-    return { model_id: model.id, range, latest: latestProbe(model.id), stats: summarize(rows) };
+      .all(row.id, since);
+    return { model_id: row.id, range, latest: latestProbe(row.id), stats: summarize(rows) };
   });
 
   app.get('/api/probes', async (req) => {

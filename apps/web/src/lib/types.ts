@@ -7,12 +7,12 @@ export const RANGE_OPTIONS: { value: RangeKey; label: string }[] = [
   { value: '7d', label: '近 7 天' },
 ]
 
-export interface Model {
+/** 供应商：OpenAI 兼容接入点，探测参数挂在供应商上 */
+export interface Provider {
   id: number
   name: string
   base_url: string
   api_key: string
-  model: string
   prompt: string
   max_tokens: number
   timeout_ms: number
@@ -20,6 +20,34 @@ export interface Model {
   enabled: number
   created_at: string
   updated_at: string
+}
+
+export interface ProviderInput {
+  name: string
+  base_url: string
+  api_key: string
+  prompt: string
+  max_tokens: number
+  timeout_ms: number
+  interval_minutes: number
+  enabled: boolean
+}
+
+/** 模型（联表视图）：挂在供应商之下 */
+export interface ModelRow {
+  id: number
+  provider_id: number
+  model: string
+  enabled: number
+  created_at: string
+  provider_name: string
+  base_url: string
+  provider_enabled: number
+  interval_minutes: number
+}
+
+export interface ModelWithLatest extends ModelRow {
+  latest?: ProbeResult | null
 }
 
 export interface ProbeResult {
@@ -36,22 +64,6 @@ export interface ProbeResult {
   error_type: string | null
   error_message: string | null
   created_at: string
-}
-
-export interface ModelWithLatest extends Model {
-  latest?: ProbeResult | null
-}
-
-export interface ModelInput {
-  name: string
-  base_url: string
-  api_key: string
-  model: string
-  prompt: string
-  max_tokens: number
-  timeout_ms: number
-  interval_minutes: number
-  enabled: boolean
 }
 
 export interface MetricStats {

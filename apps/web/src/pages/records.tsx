@@ -6,7 +6,7 @@ import { fmtDateTime, fmtMs, fmtTps } from '@/lib/format'
 import {
   ERROR_TYPE_LABELS,
   RANGE_OPTIONS,
-  type Model,
+  type ModelRow,
   type ProbesResponse,
   type RangeKey,
 } from '@/lib/types'
@@ -36,7 +36,7 @@ type StatusFilter = 'all' | 'ok' | 'error'
 type RangeFilter = 'all' | RangeKey
 
 export function RecordsPage() {
-  const [models, setModels] = useState<Model[]>([])
+  const [models, setModels] = useState<ModelRow[]>([])
   const [modelId, setModelId] = useState<string>('all')
   const [status, setStatus] = useState<StatusFilter>('all')
   const [range, setRange] = useState<RangeFilter>('all')
@@ -99,7 +99,7 @@ export function RecordsPage() {
                 <SelectItem value="all">全部模型</SelectItem>
                 {models.map((m) => (
                   <SelectItem key={m.id} value={String(m.id)}>
-                    {m.name}
+                    {m.provider_name} / {m.model}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -173,9 +173,18 @@ export function RecordsPage() {
                       {fmtDateTime(p.created_at)}
                     </TableCell>
                     <TableCell className="text-sm">
-                      {p.model_id != null
-                        ? (modelMap.get(p.model_id)?.name ?? p.model_id)
-                        : '—'}
+                      {p.model_id != null ? (
+                        <>
+                          <div className="font-mono">
+                            {modelMap.get(p.model_id)?.model ?? p.model_id}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {modelMap.get(p.model_id)?.provider_name}
+                          </div>
+                        </>
+                      ) : (
+                        '—'
+                      )}
                     </TableCell>
                     <TableCell>
                       {p.status === 'ok' ? (

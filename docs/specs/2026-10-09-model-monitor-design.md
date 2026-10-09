@@ -149,3 +149,8 @@ CREATE TABLE IF NOT EXISTS settings (
 - API Key 本地明文存储；不加密、不脱敏返回（本地工具）
 - 探测默认并发 = 1（逐模型串行），jitter ≤ 30s
 - 区间聚合采用 SQLite 时间过滤 + JS 计算分位数（数据量小，无需扩展）
+
+## 11. 变更记录
+
+- 2026-10-09 v1.1：探测兼容误粘贴完整接口地址（自动去 `/chat/completions` 后缀）；404/405 自动补 `/v1` 重试；错误信息携带实际请求 URL；新增 `POST /api/models-list` 拉取远端模型列表。
+- 2026-10-09 v2：结构改为 供应商(providers) → 模型(models) 两级。供应商承载 base_url/api_key/测试 prompt/max_tokens/超时/间隔/启用；模型仅含 model ID 与启用状态（UNIQUE(provider_id, model)）。探测配置由两表联查合成（`getModelConfig`）；新增 `GET/POST /api/providers`、`PUT/DELETE /api/providers/:id`、`POST /api/providers/:id/models`（批量）、`PUT /api/models/:id`（仅 enabled）。旧单表数据自动迁移：按 base_url+api_key 归组为供应商，模型与探测记录 id 保持不变。

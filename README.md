@@ -11,7 +11,7 @@
 
 - 前端：React 19 + TypeScript + Vite + Tailwind CSS + shadcn/ui + Recharts
 - 后端：Node.js (ESM) + Fastify + better-sqlite3，原生定时器调度
-- 存储：SQLite 单文件 `data/monitor.db`（含 API Key，本地明文保存，勿提交/外传）
+- 存储：SQLite 单文件 `data/monitor.db`（providers / models / probe_results 三张表；API Key 本地明文保存，勿提交/外传）
 
 ## 快速开始
 
@@ -43,9 +43,9 @@ docs/specs    设计文档
 
 ## 使用说明
 
-1. 「模型管理」→「添加模型」，填入名称、Base URL（如 `https://api.example.com/v1`）、API Key、模型 ID
-2. 点「测试连接」立即验证一次（不落库）
-3. 保存后默认每 30 分钟自动探测一次（每模型可单独配置间隔），也可随时手动「立即探测」
+1. 「模型管理」→「添加供应商」：填名称、Base URL（如 `https://api.example.com/v1`）、API Key 与探测参数（间隔 / max_tokens / 超时），「测试连接」会请求 `{base_url}/models` 验证连通性
+2. 在供应商卡片下「添加模型」：手动输入模型 ID，或「获取列表」勾选批量添加
+3. 按供应商的间隔（默认 30 分钟）自动探测其下所有启用的模型，也可随时手动「立即探测」；供应商/模型均可单独停用
 4. 「仪表盘」查看各模型最新速度与趋势图（1h/6h/24h/7d），每 30 秒自动刷新
 5. 「探测记录」查看全部原始明细，支持按模型/状态/时间过滤
 

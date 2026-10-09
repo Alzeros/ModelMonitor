@@ -168,7 +168,7 @@ export function DashboardPage() {
       ) : models.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
-            <p className="text-sm text-muted-foreground">还没有添加任何模型</p>
+            <p className="text-sm text-muted-foreground">还没有添加供应商和模型</p>
             <Button asChild>
               <Link to="/models">
                 <Plus className="size-4" /> 去添加模型
@@ -194,17 +194,17 @@ export function DashboardPage() {
                         !latest && 'bg-muted-foreground/40'
                       )}
                     />
-                    <CardTitle className="truncate text-base">{m.name}</CardTitle>
-                    {!m.enabled ? (
+                    <CardTitle className="truncate font-mono text-base">{m.model}</CardTitle>
+                    {!m.enabled || !m.provider_enabled ? (
                       <Badge variant="secondary" className="shrink-0">
-                        <PauseCircle className="size-3" /> 已停用
+                        <PauseCircle className="size-3" />
+                        {!m.provider_enabled ? '供应商已停用' : '已停用'}
                       </Badge>
                     ) : null}
-                    <Badge variant="outline" className="ml-auto shrink-0 font-mono text-xs">
-                      {m.model}
-                    </Badge>
                   </div>
-                  <p className="truncate text-xs text-muted-foreground">{m.base_url}</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {m.provider_name} · {m.base_url}
+                  </p>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {latest ? (
@@ -305,7 +305,7 @@ export function DashboardPage() {
                         key={m.id}
                         type="monotone"
                         dataKey={`tps_${m.id}`}
-                        name={m.name}
+                        name={m.model}
                         stroke={colorForIndex(i)}
                         strokeWidth={2}
                         dot={false}
@@ -353,7 +353,7 @@ export function DashboardPage() {
                         key={m.id}
                         type="monotone"
                         dataKey={`ttft_${m.id}`}
-                        name={m.name}
+                        name={m.model}
                         stroke={colorForIndex(i)}
                         strokeWidth={2}
                         dot={false}
