@@ -17,6 +17,7 @@ export interface Provider {
   max_tokens: number
   timeout_ms: number
   interval_minutes: number
+  probe_gap_ms: number
   enabled: number
   created_at: string
   updated_at: string
@@ -30,6 +31,7 @@ export interface ProviderInput {
   max_tokens: number
   timeout_ms: number
   interval_minutes: number
+  probe_gap_ms: number
   enabled: boolean
 }
 

@@ -31,6 +31,7 @@ function migrate() {
         prompt TEXT NOT NULL,
         max_tokens INTEGER NOT NULL DEFAULT 256,
         timeout_ms INTEGER NOT NULL DEFAULT 60000,
+        probe_gap_ms INTEGER NOT NULL DEFAULT 5000,
         interval_minutes INTEGER NOT NULL DEFAULT 30,
         enabled INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL,
@@ -128,6 +129,14 @@ function migrate() {
 }
 migrate();
 
+// 旧库升级：providers 补充 probe_gap_ms 列（同供应商内相邻两次探测的最小间隔）
+{
+  const pcols = db.prepare('PRAGMA table_info(providers)').all().map((c) => c.name);
+  if (pcols.length && !pcols.includes('probe_gap_ms')) {
+    db.exec('ALTER TABLE providers ADD COLUMN probe_gap_ms INTEGER NOT NULL DEFAULT 5000');
+  }
+}
+
 // ---------- 供应商 ----------
 
 export function listProviders() {
@@ -142,14 +151,14 @@ export function createProvider(p) {
   const now = new Date().toISOString();
   const info = db
     .prepare(
-      `INSERT INTO providers (name, base_url, api_key, prompt, max_tokens, timeout_ms, interval_minutes, enabled, created_at, updated_at)
-       VALUES (@name, @base_url, @api_key, @prompt, @max_tokens, @timeout_ms, @interval_minutes, @enabled, @now, @now)`
+      `INSERT INTO providers (name, base_url, api_key, prompt, max_tokens, timeout_ms, interval_minutes, probe_gap_ms, enabled, created_at, updated_at)
+       VALUES (@name, @base_url, @api_key, @prompt, @max_tokens, @timeout_ms, @interval_minutes, @probe_gap_ms, @enabled, @now, @now)`
     )
     .run({ ...p, now });
   return getProvider(info.lastInsertRowid);
 }
 
-const PROVIDER_FIELDS = ['name', 'base_url', 'api_key', 'prompt', 'max_tokens', 'timeout_ms', 'interval_minutes', 'enabled'];
+const PROVIDER_FIELDS = ['name', 'base_url', 'api_key', 'prompt', 'max_tokens', 'timeout_ms', 'interval_minutes', 'probe_gap_ms', 'enabled'];
 
 export function updateProvider(id, patch) {
   const sets = [];

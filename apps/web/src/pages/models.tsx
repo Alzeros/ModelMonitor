@@ -73,6 +73,7 @@ interface ProviderFormState {
   max_tokens: string
   timeout_ms: string
   interval_minutes: string
+  probe_gap_ms: string
   enabled: boolean
 }
 
@@ -85,6 +86,7 @@ function emptyProviderForm(defaultInterval?: string): ProviderFormState {
     max_tokens: '256',
     timeout_ms: '60000',
     interval_minutes: defaultInterval ?? '30',
+    probe_gap_ms: '5000',
     enabled: true,
   }
 }
@@ -98,6 +100,7 @@ function toProviderForm(p: Provider): ProviderFormState {
     max_tokens: String(p.max_tokens),
     timeout_ms: String(p.timeout_ms),
     interval_minutes: String(p.interval_minutes),
+    probe_gap_ms: String(p.probe_gap_ms),
     enabled: p.enabled === 1,
   }
 }
@@ -189,6 +192,7 @@ export function ModelsPage() {
       max_tokens: numOr(pform.max_tokens, 256, 1, 65536),
       timeout_ms: numOr(pform.timeout_ms, 60000, 1000, 600000),
       interval_minutes: numOr(pform.interval_minutes, 30, 1, 10080),
+      probe_gap_ms: numOr(pform.probe_gap_ms, 5000, 0, 60000),
       enabled: pform.enabled,
     }
   }
@@ -574,7 +578,7 @@ export function ModelsPage() {
               />
             </div>
 
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
               <div className="grid gap-2">
                 <Label htmlFor="p-max">max_tokens</Label>
                 <Input
@@ -606,7 +610,24 @@ export function ModelsPage() {
                   onChange={(e) => setField('interval_minutes', e.target.value)}
                 />
               </div>
+              <div className="grid gap-2">
+                <Label htmlFor="p-gap" title="同一供应商内相邻两次探测请求的间隔，0 表示不间隔">
+                  模型间隔 (ms)
+                </Label>
+                <Input
+                  id="p-gap"
+                  type="number"
+                  min={0}
+                  step={500}
+                  value={pform.probe_gap_ms}
+                  onChange={(e) => setField('probe_gap_ms', e.target.value)}
+                  title="同一供应商内相邻两次探测请求的间隔，0 表示不间隔"
+                />
+              </div>
             </div>
+            <p className="text-xs text-muted-foreground">
+              同一供应商下的多个模型按顺序串行探测，相邻请求间隔「模型间隔」，避免并发互相干扰
+            </p>
 
             <div className="flex items-center justify-between rounded-lg border p-3">
               <div>

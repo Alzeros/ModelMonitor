@@ -154,3 +154,4 @@ CREATE TABLE IF NOT EXISTS settings (
 
 - 2026-10-09 v1.1：探测兼容误粘贴完整接口地址（自动去 `/chat/completions` 后缀）；404/405 自动补 `/v1` 重试；错误信息携带实际请求 URL；新增 `POST /api/models-list` 拉取远端模型列表。
 - 2026-10-09 v2：结构改为 供应商(providers) → 模型(models) 两级。供应商承载 base_url/api_key/测试 prompt/max_tokens/超时/间隔/启用；模型仅含 model ID 与启用状态（UNIQUE(provider_id, model)）。探测配置由两表联查合成（`getModelConfig`）；新增 `GET/POST /api/providers`、`PUT/DELETE /api/providers/:id`、`POST /api/providers/:id/models`（批量）、`PUT /api/models/:id`（仅 enabled）。旧单表数据自动迁移：按 base_url+api_key 归组为供应商，模型与探测记录 id 保持不变。
+- 2026-10-09 v2.1：调度改为供应商粒度定时 + 供应商内串行队列：到点把该供应商全部启用模型按顺序入队逐个探测，相邻请求保持 `probe_gap_ms` 间隔（新列，默认 5000ms，0–60000），不同供应商之间仍并行。手动探测插队但同样串行，避免同一供应商并发探测造成的测量误差。

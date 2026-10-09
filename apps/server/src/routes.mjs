@@ -70,6 +70,7 @@ function parseProviderBody(body, { requireName = true } = {}) {
   out.max_tokens = toInt(b.max_tokens, 256, 1, 65536);
   out.timeout_ms = toInt(b.timeout_ms, 60000, 1000, 600000);
   out.interval_minutes = toInt(b.interval_minutes, 30, 1, 10080);
+  out.probe_gap_ms = toInt(b.probe_gap_ms, 5000, 0, 60000);
   out.enabled = b.enabled === undefined ? 1 : (b.enabled ? 1 : 0);
 
   return { out, errors };
