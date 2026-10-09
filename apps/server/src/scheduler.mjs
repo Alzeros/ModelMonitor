@@ -26,6 +26,11 @@ function gapOf(provider) {
   return Math.min(60000, Math.max(0, Math.round(Number(provider?.probe_gap_ms) || 0)));
 }
 
+/** 统一的代数读取：未经过任何 tick（服务刚启动）时为 0，与内部比较口径一致 */
+function genOf(pid) {
+  return generation.get(pid) ?? 0;
+}
+
 /** 清空全部定时任务与队列（队列中等待的项以 null 完成）；保留节拍记录供重建 */
 export function stopScheduler() {
   for (const entry of timers.values()) {
@@ -87,7 +92,7 @@ export function reloadScheduler() {
 
 /** 单轮 tick：作废旧 drain → 入队全部启用模型 → 消化 → 排定下一轮 */
 function tickProvider(pid, intervalMs) {
-  const myGen = (generation.get(pid) ?? 0) + 1;
+  const myGen = genOf(pid) + 1;
   generation.set(pid, myGen);
   scheduledAt.set(pid, { at: Date.now() + intervalMs, intervalMs });
 
@@ -128,10 +133,19 @@ async function drainProvider(pid, myGen) {
   drainGen.set(pid, myGen);
   try {
     for (;;) {
-      if (generation.get(pid) !== myGen) {
-        // 代已作废：本代未消费的项快速放行，避免等待方悬挂
-        for (const item of queues.get(pid) ?? []) item.resolve(null);
-        queues.set(pid, []);
+      if (genOf(pid) !== myGen) {
+        // 代已作废：非 manual 项快速放行；manual 探测转投新一代队列头，由新 drain 兑现
+        const rest = [];
+        for (const item of queues.get(pid) ?? []) {
+          if (item.manual) rest.unshift(item);
+          else {
+            enqueued.delete(item.modelId);
+            item.resolve(null);
+          }
+        }
+        queues.set(pid, rest);
+        // 新代 drain 若已排空退出，需要为转投的手动项再起一个 drain
+        if (rest.length) void drainProvider(pid, genOf(pid));
         break;
       }
       const q = queues.get(pid);
@@ -159,7 +173,7 @@ export async function runManualProbe(modelId) {
   const cfg = getModelConfig(modelId);
   if (!cfg) return { error: 'not_found' };
   const p = enqueueProbe(cfg.provider_id, modelId, true);
-  if (p) void drainProvider(cfg.provider_id, generation.get(cfg.provider_id) ?? 0);
-  else return { error: 'probe_running' };
+  if (!p) return { error: 'probe_running' };
+  void drainProvider(cfg.provider_id, genOf(cfg.provider_id));
   return p;
 }

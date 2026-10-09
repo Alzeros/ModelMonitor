@@ -1,9 +1,25 @@
 import { DEFAULT_PROMPT, insertProbeResult } from './db.mjs';
+import { randomBytes } from 'node:crypto';
 
 /** 由 base_url 计算实际请求地址；兼容用户直接粘贴完整接口地址的情况 */
 function buildChatUrl(base) {
   const b = String(base).trim().replace(/\/+$/, '').replace(/\/chat\/completions$/i, '');
   return `${b}/chat/completions`;
+}
+
+function messagesOf(model) {
+  const prompt = model.prompt || DEFAULT_PROMPT;
+  // 部分网关会按 prompt 缓存响应：固定 prompt 会命中缓存、整包瞬回，
+  // 测到的是缓存吞吐而非模型速度（输出阶段短得可疑）。注入一次性校验码破坏命中，
+  // 迫使网关每次都做真实推理。校验码行为对测速无影响。
+  const nonce = randomBytes(4).toString('hex');
+  return [
+    {
+      role: 'user',
+      // 校验码放在开头：网关缓存多以 prompt 前缀为 key，尾码无法命中破坏
+      content: `（防缓存校验码 ${nonce}，请忽略本行）\n${prompt}`,
+    },
+  ];
 }
 
 function truncate(s, n = 500) {
@@ -58,7 +74,7 @@ async function doFetch(model, url, { maxTokens, useStreamOptions, thinking, sign
     },
     body: JSON.stringify({
       model: model.model,
-      messages: [{ role: 'user', content: model.prompt || DEFAULT_PROMPT }],
+      messages: messagesOf(model),
       max_tokens: maxTokens,
       stream: true,
       ...(useStreamOptions ? { stream_options: { include_usage: true } } : {}),
