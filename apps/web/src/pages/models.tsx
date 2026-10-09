@@ -449,6 +449,7 @@ export function ModelsPage() {
                       暂无模型，点击下方「添加模型」（支持从服务获取列表批量添加）
                     </p>
                   ) : (
+                    <div className="overflow-x-auto">
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -457,7 +458,7 @@ export function ModelsPage() {
                           <TableHead className="hidden sm:table-cell">首字</TableHead>
                           <TableHead className="hidden md:table-cell">上次探测</TableHead>
                           <TableHead>启用</TableHead>
-                          <TableHead className="hidden lg:table-cell">思考</TableHead>
+                          <TableHead>思考</TableHead>
                           <TableHead className="text-right">操作</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -497,7 +498,7 @@ export function ModelsPage() {
                                 aria-label={`启用 ${m.model}`}
                               />
                             </TableCell>
-                            <TableCell className="hidden lg:table-cell">
+                            <TableCell>
                               <Select
                                 value={m.thinking_strength}
                                 onValueChange={(v) => void setModelThinking(m, v)}
@@ -544,6 +545,7 @@ export function ModelsPage() {
                         ))}
                       </TableBody>
                     </Table>
+                    </div>
                   )}
                   <div className="flex justify-end">
                     <Button variant="outline" size="sm" onClick={() => openAddModels(p)}>
