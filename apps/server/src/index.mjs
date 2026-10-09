@@ -15,7 +15,9 @@ const app = Fastify({ logger: false, bodyLimit: 2 * 1024 * 1024 });
 if (fs.existsSync(distDir)) {
   await app.register(fastifyStatic, {
     root: distDir,
-    wildcard: false,
+    // wildcard=true：请求时实时解析文件。false 会在启动时为每个文件注册固定路由，
+    // 前端重建后新哈希文件无路由 → 落到兜底返回 index.html → MIME 报错
+    wildcard: true,
     cacheControl: false, // 关闭插件默认头，用下方 setHeaders 的策略
     setHeaders: (res, pathname) => {
       if (pathname.endsWith('.html')) {
