@@ -50,8 +50,20 @@ const BUCKET_MS: Record<RangeKey, number> = {
   '24h': 3_600_000,
 }
 
+const RANGE_STORAGE_KEY = 'dashboard.range'
+
+function loadRange(): RangeKey {
+  try {
+    const v = localStorage.getItem(RANGE_STORAGE_KEY)
+    if (v && RANGE_OPTIONS.some((o) => o.value === v)) return v as RangeKey
+  } catch {
+    /* ignore */
+  }
+  return '24h'
+}
+
 export function DashboardPage() {
-  const [range, setRange] = useState<RangeKey>('24h')
+  const [range, setRange] = useState<RangeKey>(loadRange)
   const [models, setModels] = useState<ModelWithLatest[]>([])
   const [summaries, setSummaries] = useState<Record<number, Summary | null>>({})
   const [rows, setRows] = useState<Row[]>([])
@@ -193,7 +205,17 @@ export function DashboardPage() {
           <p className="text-sm text-muted-foreground">模型输出效率总览，每 30 秒自动刷新</p>
         </div>
         <div className="flex items-center gap-2">
-          <Tabs value={range} onValueChange={(v) => setRange(v as RangeKey)}>
+          <Tabs
+            value={range}
+            onValueChange={(v) => {
+              setRange(v as RangeKey)
+              try {
+                localStorage.setItem(RANGE_STORAGE_KEY, v)
+              } catch {
+                /* ignore */
+              }
+            }}
+          >
             <TabsList>
               {RANGE_OPTIONS.map((o) => (
                 <TabsTrigger key={o.value} value={o.value}>

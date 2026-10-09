@@ -1,10 +1,10 @@
 export type RangeKey = '30m' | '1h' | '8h' | '24h'
 
 export const RANGE_OPTIONS: { value: RangeKey; label: string }[] = [
-  { value: '30m', label: '近 30 分钟' },
-  { value: '1h', label: '近 1 小时' },
-  { value: '8h', label: '近 8 小时' },
-  { value: '24h', label: '近 24 小时' },
+  { value: '30m', label: '30 分钟' },
+  { value: '1h', label: '1 小时' },
+  { value: '8h', label: '8 小时' },
+  { value: '24h', label: '24 小时' },
 ]
 
 /** 供应商：OpenAI 兼容接入点，探测参数挂在供应商上 */
