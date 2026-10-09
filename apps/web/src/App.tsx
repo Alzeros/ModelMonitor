@@ -1,22 +1,24 @@
-import { useState } from 'react'
-import './App.css'
+import { HashRouter, Route, Routes } from 'react-router-dom'
+import { ThemeProvider } from 'next-themes'
+import { Toaster } from '@/components/ui/sonner'
+import { AppShell } from '@/components/app-shell'
+import { DashboardPage } from '@/pages/dashboard'
+import { ModelsPage } from '@/pages/models'
+import { RecordsPage } from '@/pages/records'
 
-function App() {
-  const [count, setCount] = useState(0)
-
+export default function App() {
   return (
-    <>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-    </>
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+      <HashRouter>
+        <AppShell>
+          <Routes>
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/models" element={<ModelsPage />} />
+            <Route path="/records" element={<RecordsPage />} />
+          </Routes>
+        </AppShell>
+        <Toaster richColors position="top-center" />
+      </HashRouter>
+    </ThemeProvider>
   )
 }
-
-export default App
