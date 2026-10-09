@@ -18,7 +18,7 @@ import {
   updateProvider,
 } from './db.mjs';
 import { probeModel } from './prober.mjs';
-import { reloadScheduler, runManualProbe } from './scheduler.mjs';
+import { forgetProvider, reloadScheduler, runManualProbe } from './scheduler.mjs';
 
 const RANGE_MS = {
   '30m': 1_800_000,
@@ -135,13 +135,17 @@ export async function registerRoutes(app) {
     const { out, errors } = parseProviderBody({ ...existing, ...req.body });
     if (errors.length) return reply.code(400).send({ errors });
     const provider = updateProvider(id, out);
-    reloadScheduler();
+    // 仅影响调度的变更才重建定时器（启停/探测间隔）；其它字段变更保持既有节拍
+    if (Boolean(existing.enabled) !== Boolean(provider.enabled) || existing.interval_minutes !== provider.interval_minutes) {
+      reloadScheduler();
+    }
     return provider;
   });
 
   app.delete('/api/providers/:id', async (req, reply) => {
     const id = Number(req.params.id);
     if (!getProvider(id)) return reply.code(404).send({ error: 'provider not found' });
+    forgetProvider(id);
     deleteProvider(id); // 级联删除其模型与探测记录
     reloadScheduler();
     return { ok: true };
@@ -191,7 +195,8 @@ export async function registerRoutes(app) {
     if (req.body?.display_name !== undefined) patch.display_name = String(req.body.display_name).trim().slice(0, 50);
     if (!Object.keys(patch).length) return reply.code(400).send({ error: '无有效字段（enabled / thinking_strength / display_name）' });
     const model = updateModel(row.id, patch);
-    reloadScheduler();
+    // 仅启停影响调度；显示名称/思考强度等变更保持既有探测节拍
+    if (req.body?.enabled !== undefined) reloadScheduler();
     return model;
   });
 

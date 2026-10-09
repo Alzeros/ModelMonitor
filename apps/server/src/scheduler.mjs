@@ -1,7 +1,7 @@
 import { getModelConfig, getProvider, listModelsView, listProviders } from './db.mjs';
 import { probeModel } from './prober.mjs';
 
-/** provider_id -> { startTimer, tickTimer }，定时粒度为供应商 */
+/** provider_id -> { timer }，定时粒度为供应商 */
 const timers = new Map();
 /** provider_id -> [{ modelId, resolve }]，供应商内串行探测队列 */
 const queues = new Map();
@@ -9,8 +9,12 @@ const queues = new Map();
 const draining = new Set();
 /** 已在队列中的 model_id 集合，防止重复排队 */
 const enqueued = new Set();
+/** provider_id -> { at, intervalMs }：下一次计划触发时刻，配置变更重建定时器时保持节拍 */
+const scheduledAt = new Map();
 
 const JITTER_MS = 30_000;
+/** 服务启动/新增供应商后，首轮探测的额外延迟（不必等一个完整周期才出数据） */
+const FIRST_RUN_EXTRA_MS = 15_000;
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -20,15 +24,11 @@ function gapOf(provider) {
   return Math.min(60000, Math.max(0, Math.round(Number(provider?.probe_gap_ms) || 0)));
 }
 
-function clearEntry(entry) {
-  if (!entry) return;
-  if (entry.startTimer) clearTimeout(entry.startTimer);
-  if (entry.tickTimer) clearInterval(entry.tickTimer);
-}
-
-/** 清空全部定时任务与队列（队列中等待的项以 null 完成） */
+/** 清空全部定时任务与队列（队列中等待的项以 null 完成）；保留节拍记录供重建 */
 export function stopScheduler() {
-  for (const entry of timers.values()) clearEntry(entry);
+  for (const entry of timers.values()) {
+    if (entry.timer) clearTimeout(entry.timer);
+  }
   timers.clear();
   for (const q of queues.values()) {
     for (const item of q) item.resolve(null);
@@ -38,30 +38,49 @@ export function stopScheduler() {
   enqueued.clear();
 }
 
+/** 供应商被删除时清理其节拍记录 */
+export function forgetProvider(pid) {
+  scheduledAt.delete(pid);
+}
+
 /**
  * 按供应商重建定时任务。到点后把该供应商下所有启用的模型按顺序入队，
  * 由串行队列逐个探测（同一供应商内绝不并发），不同供应商之间互不影响。
+ *
+ * 节拍规则：
+ * - 首次启动/新增供应商/间隔变化：错峰后快速完成首轮，随后进入固定周期
+ * - 其它配置变更重建定时器：保持原触发时刻；已到期未跑的尽快补上
  */
 export function reloadScheduler() {
   stopScheduler();
   for (const p of listProviders()) {
-    if (!p.enabled) continue;
     const pid = p.id;
+    if (!p.enabled) {
+      scheduledAt.delete(pid);
+      continue;
+    }
     const minutes = Math.min(10080, Math.max(1, Math.round(Number(p.interval_minutes) || 30)));
-    // 启动时随机延迟错峰
-    const startTimer = setTimeout(() => {
-      const tickTimer = setInterval(() => {
-        for (const m of listModelsView()) {
-          if (m.provider_id === pid && m.enabled && m.provider_enabled) {
-            enqueueProbe(pid, m.id, false);
-          }
+    const intervalMs = minutes * 60_000;
+
+    let delay;
+    const prev = scheduledAt.get(pid);
+    if (!prev || prev.intervalMs !== intervalMs) {
+      delay = Math.floor(Math.random() * JITTER_MS) + FIRST_RUN_EXTRA_MS;
+    } else {
+      delay = Math.max(5_000, Math.round(prev.at - Date.now()));
+    }
+
+    const fire = () => {
+      scheduledAt.set(pid, { at: Date.now() + intervalMs, intervalMs });
+      for (const m of listModelsView()) {
+        if (m.provider_id === pid && m.enabled && m.provider_enabled) {
+          enqueueProbe(pid, m.id, false);
         }
-        void drainProvider(pid);
-      }, minutes * 60_000);
-      const entry = timers.get(pid);
-      if (entry) entry.tickTimer = tickTimer;
-    }, Math.floor(Math.random() * JITTER_MS));
-    timers.set(pid, { startTimer, tickTimer: null });
+      }
+      void drainProvider(pid);
+    };
+
+    timers.set(pid, { timer: setTimeout(fire, delay), intervalMs });
   }
 }
 
