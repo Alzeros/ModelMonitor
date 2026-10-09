@@ -430,9 +430,13 @@ export function DashboardPage() {
             </CardHeader>
             <CardContent>
               <ModelChips models={models} hidden={hiddenIds} onToggle={toggleCompare} />
-              {hasCompare ? (
-                <ResponsiveContainer width="100%" height={Math.max(200, compareData.length * 34 + 40)}>
-                  <BarChart data={compareData} layout="vertical" margin={{ top: 4, right: 56, bottom: 0, left: 4 }}>
+              {!hasCompare ? (
+                <p className="mb-2 text-sm text-muted-foreground">
+                  暂无有效样本，等待定时探测或手动探测
+                </p>
+              ) : null}
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={compareData} layout="vertical" margin={{ top: 4, right: 56, bottom: 0, left: 4 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" horizontal={false} />
                     <XAxis
                       type="number"
@@ -464,15 +468,6 @@ export function DashboardPage() {
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
-              ) : models.some((m) => !hiddenIds.has(m.id)) ? (
-                <div className="flex h-[120px] items-center justify-center text-sm text-muted-foreground">
-                  暂无有效的探测数据，等待定时探测或手动探测
-                </div>
-              ) : (
-                <div className="flex h-[120px] items-center justify-center text-sm text-muted-foreground">
-                  未选择要对比的模型，点击上方选项加入
-                </div>
-              )}
             </CardContent>
           </Card>
 
@@ -659,9 +654,15 @@ export function DashboardPage() {
                 </CardHeader>
                 <CardContent>
                   <ModelChips models={models} hidden={tpsHidden} onToggle={toggleTpsHidden} />
-                  {tpsRows.length > 0 ? (
-                    <ResponsiveContainer width="100%" height={280}>
-                      <LineChart data={tpsRows} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
+                  {tpsRows.length === 0 ? (
+                    <p className="mb-2 text-sm text-muted-foreground">
+                      {models.some((m) => !tpsHidden.has(m.id))
+                        ? '所选时间范围内暂无探测数据'
+                        : '未选择要展示的模型，点击上方选项加入'}
+                    </p>
+                  ) : null}
+                  <ResponsiveContainer width="100%" height={280}>
+                    <LineChart data={tpsRows} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                         <XAxis
                           dataKey="time"
@@ -692,13 +693,6 @@ export function DashboardPage() {
                         )}
                       </LineChart>
                     </ResponsiveContainer>
-                  ) : (
-                    <div className="flex h-[280px] items-center justify-center text-sm text-muted-foreground">
-                      {models.some((m) => !tpsHidden.has(m.id))
-                        ? '所选时间范围内暂无探测数据'
-                        : '未选择要展示的模型，点击上方选项加入'}
-                    </div>
-                  )}
                 </CardContent>
               </Card>
 
@@ -720,9 +714,15 @@ export function DashboardPage() {
                 </CardHeader>
                 <CardContent>
                   <ModelChips models={models} hidden={ttftHidden} onToggle={toggleTtftHidden} />
-                  {ttftRows.length > 0 ? (
-                    <ResponsiveContainer width="100%" height={280}>
-                      <LineChart data={ttftRows} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
+                  {ttftRows.length === 0 ? (
+                    <p className="mb-2 text-sm text-muted-foreground">
+                      {models.some((m) => !ttftHidden.has(m.id))
+                        ? '所选时间范围内暂无探测数据'
+                        : '未选择要展示的模型，点击上方选项加入'}
+                    </p>
+                  ) : null}
+                  <ResponsiveContainer width="100%" height={280}>
+                    <LineChart data={ttftRows} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                         <XAxis
                           dataKey="time"
@@ -761,13 +761,6 @@ export function DashboardPage() {
                         )}
                       </LineChart>
                     </ResponsiveContainer>
-                  ) : (
-                    <div className="flex h-[280px] items-center justify-center text-sm text-muted-foreground">
-                      {models.some((m) => !ttftHidden.has(m.id))
-                        ? '所选时间范围内暂无探测数据'
-                        : '未选择要展示的模型，点击上方选项加入'}
-                    </div>
-                  )}
                 </CardContent>
               </Card>
             </div>
