@@ -41,6 +41,7 @@ export interface ModelRow {
   provider_id: number
   model: string
   enabled: number
+  thinking_strength: string
   created_at: string
   provider_name: string
   base_url: string
@@ -62,6 +63,10 @@ export interface ProbeResult {
   estimated: 0 | 1
   tps: number | null
   avg_tps: number | null
+  reasoning_tokens: number | null
+  reasoning_ms: number | null
+  reasoning_tps: number | null
+  content_tokens: number | null
   prompt_tokens: number | null
   error_type: string | null
   error_message: string | null

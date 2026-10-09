@@ -54,3 +54,4 @@ docs/specs    设计文档
 - `tps = 输出 token 数 / (流结束时刻 - 首token时刻)`：纯生成速度
 - 服务未返回 `usage.completion_tokens` 时按 SSE 分块数估算（记录标记「估算」）
 - 部分服务不支持 `stream_options: include_usage`，后端遇到 400 会自动去掉该参数重试
+- 思考型模型：prober 同时读 `delta.reasoning_content`，把指标拆成「思考速度」与「输出速度」分别记录；模型可配思考强度（默认 / low / high / max），非默认时注入 `reasoning_effort`。思考阶段耗尽 max_tokens 会报 `no_content`，可调大 max_tokens 或降为 low

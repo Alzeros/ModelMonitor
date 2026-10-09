@@ -14,7 +14,7 @@ import {
   listProviders,
   listProbes,
   setSetting,
-  updateModelEnabled,
+  updateModel,
   updateProvider,
 } from './db.mjs';
 import { probeModel } from './prober.mjs';
@@ -39,6 +39,12 @@ function toInt(v, def, min, max) {
 
 function normalizeBaseUrl(u) {
   return String(u).trim().replace(/\/+$/, '');
+}
+
+/** 思考强度归一化：default 不发送，low/high/max 注入 reasoning_effort */
+function normalizeThinking(v) {
+  const s = String(v ?? 'default');
+  return ['default', 'low', 'high', 'max'].includes(s) ? s : 'default';
 }
 
 /** 全量校验并归一化供应商字段（PUT 时先用现有记录 merge 再传入） */
@@ -159,11 +165,12 @@ export async function registerRoutes(app) {
         : [];
     const names = [...new Set(list.map((s) => String(s).trim()).filter(Boolean))];
     if (!names.length) return reply.code(400).send({ error: '模型 ID 不能为空' });
+    const thinking = normalizeThinking(req.body?.thinking_strength);
     let added = 0;
     const skipped = [];
     for (const model of names) {
       try {
-        addModel(provider.id, model);
+        addModel(provider.id, model, thinking);
         added += 1;
       } catch {
         skipped.push(model); // UNIQUE(provider_id, model) 冲突 = 已存在
@@ -176,8 +183,11 @@ export async function registerRoutes(app) {
   app.put('/api/models/:id', async (req, reply) => {
     const row = getModelRow(Number(req.params.id));
     if (!row) return reply.code(404).send({ error: 'model not found' });
-    if (req.body?.enabled === undefined) return reply.code(400).send({ error: '仅支持更新 enabled' });
-    const model = updateModelEnabled(row.id, Boolean(req.body.enabled));
+    const patch = {};
+    if (req.body?.enabled !== undefined) patch.enabled = Boolean(req.body.enabled);
+    if (req.body?.thinking_strength !== undefined) patch.thinking_strength = normalizeThinking(req.body.thinking_strength);
+    if (!Object.keys(patch).length) return reply.code(400).send({ error: '无有效字段（enabled / thinking_strength）' });
+    const model = updateModel(row.id, patch);
     reloadScheduler();
     return model;
   });
@@ -212,8 +222,9 @@ export async function registerRoutes(app) {
       api_key: out.api_key,
       model: b.model.trim(),
       prompt: out.prompt,
-      max_tokens: toInt(b.max_tokens, 64, 1, 65536),
+      max_tokens: toInt(b.max_tokens, 256, 1, 65536),
       timeout_ms: toInt(b.timeout_ms, 30000, 1000, 600000),
+      thinking_strength: normalizeThinking(b.thinking_strength),
     };
     return await probeModel(cfg, { persist: false });
   });

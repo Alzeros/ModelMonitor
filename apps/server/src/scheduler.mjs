@@ -75,7 +75,7 @@ function enqueueProbe(pid, modelId, manual) {
       q = [];
       queues.set(pid, q);
     }
-    const entry = { modelId, resolve };
+    const entry = { modelId, resolve, manual };
     if (manual) q.unshift(entry);
     else q.push(entry);
     void drainProvider(pid);

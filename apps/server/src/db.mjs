@@ -94,6 +94,7 @@ function migrate() {
           provider_id INTEGER NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
           model TEXT NOT NULL,
           enabled INTEGER NOT NULL DEFAULT 1,
+          thinking_strength TEXT NOT NULL DEFAULT 'default',
           created_at TEXT NOT NULL,
           UNIQUE(provider_id, model)
         );
@@ -111,6 +112,10 @@ function migrate() {
         estimated INTEGER NOT NULL DEFAULT 0,
         tps REAL,
         avg_tps REAL,
+        reasoning_tokens INTEGER,
+        reasoning_ms INTEGER,
+        reasoning_tps REAL,
+        content_tokens INTEGER,
         prompt_tokens INTEGER,
         error_type TEXT,
         error_message TEXT,
@@ -134,6 +139,27 @@ migrate();
   const pcols = db.prepare('PRAGMA table_info(providers)').all().map((c) => c.name);
   if (pcols.length && !pcols.includes('probe_gap_ms')) {
     db.exec('ALTER TABLE providers ADD COLUMN probe_gap_ms INTEGER NOT NULL DEFAULT 5000');
+  }
+}
+
+// 旧库升级：models 补充 thinking_strength 列；probe_results 补充思考/输出拆分指标列
+{
+  const mcols = db.prepare('PRAGMA table_info(models)').all().map((c) => c.name);
+  if (mcols.length && !mcols.includes('thinking_strength')) {
+    db.exec("ALTER TABLE models ADD COLUMN thinking_strength TEXT NOT NULL DEFAULT 'default'");
+  }
+  const rcols = db.prepare('PRAGMA table_info(probe_results)').all().map((c) => c.name);
+  if (rcols.length) {
+    for (const [col, def] of [
+      ['reasoning_tokens', 'INTEGER'],
+      ['reasoning_ms', 'INTEGER'],
+      ['reasoning_tps', 'REAL'],
+      ['content_tokens', 'INTEGER'],
+    ]) {
+      if (!rcols.includes(col)) {
+        db.exec(`ALTER TABLE probe_results ADD COLUMN ${col} ${def}`);
+      }
+    }
   }
 }
 
@@ -185,7 +211,7 @@ export function deleteProvider(id) {
 export function listModelsView() {
   return db
     .prepare(
-      `SELECT m.id, m.provider_id, m.model, m.enabled, m.created_at,
+      `SELECT m.id, m.provider_id, m.model, m.enabled, m.thinking_strength, m.created_at,
               p.name AS provider_name, p.base_url, p.enabled AS provider_enabled, p.interval_minutes
        FROM models m JOIN providers p ON p.id = m.provider_id
        ORDER BY p.id, m.id`
@@ -201,7 +227,7 @@ export function getModelRow(id) {
 export function getModelConfig(id) {
   return db
     .prepare(
-      `SELECT m.id, m.provider_id, m.model, m.enabled,
+      `SELECT m.id, m.provider_id, m.model, m.enabled, m.thinking_strength,
               p.base_url, p.api_key, p.prompt, p.max_tokens, p.timeout_ms, p.enabled AS provider_enabled
        FROM models m JOIN providers p ON p.id = m.provider_id
        WHERE m.id = ?`
@@ -209,15 +235,27 @@ export function getModelConfig(id) {
     .get(id);
 }
 
-export function addModel(providerId, model) {
+export function addModel(providerId, model, thinkingStrength = 'default') {
   const info = db
-    .prepare('INSERT INTO models (provider_id, model, enabled, created_at) VALUES (?, ?, 1, ?)')
-    .run(providerId, model, new Date().toISOString());
+    .prepare('INSERT INTO models (provider_id, model, enabled, thinking_strength, created_at) VALUES (?, ?, 1, ?, ?)')
+    .run(providerId, model, thinkingStrength, new Date().toISOString());
   return getModelRow(info.lastInsertRowid);
 }
 
-export function updateModelEnabled(id, enabled) {
-  db.prepare('UPDATE models SET enabled = ? WHERE id = ?').run(enabled ? 1 : 0, id);
+const MODEL_FIELDS = ['enabled', 'thinking_strength'];
+
+export function updateModel(id, patch) {
+  const sets = [];
+  const params = { id };
+  for (const k of MODEL_FIELDS) {
+    if (patch[k] !== undefined) {
+      sets.push(`${k} = @${k}`);
+      params[k] = k === 'enabled' ? (patch[k] ? 1 : 0) : patch[k];
+    }
+  }
+  if (sets.length) {
+    db.prepare(`UPDATE models SET ${sets.join(', ')} WHERE id = @id`).run(params);
+  }
   return getModelRow(id);
 }
 
@@ -231,8 +269,8 @@ export function insertProbeResult(r) {
   const created_at = new Date().toISOString();
   const info = db
     .prepare(
-      `INSERT INTO probe_results (model_id, status, ttft_ms, total_ms, completion_tokens, estimated, tps, avg_tps, prompt_tokens, error_type, error_message, created_at)
-       VALUES (@model_id, @status, @ttft_ms, @total_ms, @completion_tokens, @estimated, @tps, @avg_tps, @prompt_tokens, @error_type, @error_message, @created_at)`
+      `INSERT INTO probe_results (model_id, status, ttft_ms, total_ms, completion_tokens, estimated, tps, avg_tps, reasoning_tokens, reasoning_ms, reasoning_tps, content_tokens, prompt_tokens, error_type, error_message, created_at)
+       VALUES (@model_id, @status, @ttft_ms, @total_ms, @completion_tokens, @estimated, @tps, @avg_tps, @reasoning_tokens, @reasoning_ms, @reasoning_tps, @content_tokens, @prompt_tokens, @error_type, @error_message, @created_at)`
     )
     .run({ ...r, created_at });
   return { id: info.lastInsertRowid, created_at };

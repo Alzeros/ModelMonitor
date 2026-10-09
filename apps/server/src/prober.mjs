@@ -23,10 +23,7 @@ function round2(n) {
   return Math.round(n * 100) / 100;
 }
 
-function ok(metrics) {
-  return { status: 'ok', ...metrics, error_type: null, error_message: null };
-}
-
+/** 错误结果（无有效计时/token 数据） */
 function fail(type, message) {
   return {
     status: 'error',
@@ -36,13 +33,22 @@ function fail(type, message) {
     estimated: 0,
     tps: null,
     avg_tps: null,
+    reasoning_tokens: null,
+    reasoning_ms: null,
+    reasoning_tps: null,
+    content_tokens: null,
     prompt_tokens: null,
     error_type: type,
     error_message: truncate(message),
   };
 }
 
-async function doFetch(model, url, { maxTokens, useStreamOptions, signal }) {
+function thinkingOf(model) {
+  const v = model.thinking_strength;
+  return v && v !== 'default' ? String(v) : null;
+}
+
+async function doFetch(model, url, { maxTokens, useStreamOptions, thinking, signal }) {
   return fetch(url, {
     method: 'POST',
     headers: {
@@ -55,6 +61,7 @@ async function doFetch(model, url, { maxTokens, useStreamOptions, signal }) {
       max_tokens: maxTokens,
       stream: true,
       ...(useStreamOptions ? { stream_options: { include_usage: true } } : {}),
+      ...(thinking ? { reasoning_effort: thinking } : {}),
     }),
     signal,
   });
@@ -63,6 +70,7 @@ async function doFetch(model, url, { maxTokens, useStreamOptions, signal }) {
 async function runProbe(model) {
   const timeoutMs = Math.min(600000, Math.max(1000, Number(model.timeout_ms) || 60000));
   const maxTokens = Math.min(65536, Math.max(1, Math.round(Number(model.max_tokens) || 256)));
+  const thinking = thinkingOf(model);
   const t0 = performance.now();
   const controller = new AbortController();
   let timedOut = false;
@@ -81,13 +89,13 @@ async function runProbe(model) {
     let res = null;
     for (const url of candidates) {
       lastUrl = url;
-      res = await doFetch(model, url, { maxTokens, useStreamOptions: true, signal: controller.signal });
+      res = await doFetch(model, url, { maxTokens, useStreamOptions: true, thinking, signal: controller.signal });
       if (res.status === 404 || res.status === 405) continue;
       break;
     }
-    // 部分兼容服务不认识 stream_options 会返回 400，去掉该参数重试一次
+    // 部分兼容服务不认识 stream_options 或 reasoning_effort 会返回 400，去掉这些参数重试一次
     if (res.status === 400) {
-      res = await doFetch(model, lastUrl, { maxTokens, useStreamOptions: false, signal: controller.signal });
+      res = await doFetch(model, lastUrl, { maxTokens, useStreamOptions: false, thinking: null, signal: controller.signal });
     }
 
     if (!res.ok) {
@@ -104,8 +112,10 @@ async function runProbe(model) {
     const decoder = new TextDecoder('utf-8');
     const reader = res.body.getReader();
     let buffer = '';
-    let ttftMs = null;
-    let chunkCount = 0;
+    let firstReasoningTs = null; // 第一个 reasoning_content 分块的绝对时刻
+    let firstContentTs = null;   // 第一个可见 content 分块的绝对时刻（= TTFT）
+    let reasoningChunks = 0;
+    let contentChunks = 0;
     let usage = null;
     let streamEnded = false;
 
@@ -132,33 +142,69 @@ async function runProbe(model) {
         if (evt && typeof evt === 'object' && evt.usage && typeof evt.usage === 'object') {
           usage = evt.usage;
         }
-        const content = evt?.choices?.[0]?.delta?.content;
+        const delta = evt?.choices?.[0]?.delta;
+        const content = delta?.content;
+        const reasoning = delta?.reasoning_content;
+        if (typeof reasoning === 'string' && reasoning.length > 0) {
+          if (firstReasoningTs === null) firstReasoningTs = performance.now();
+          reasoningChunks += 1;
+        }
         if (typeof content === 'string' && content.length > 0) {
-          if (ttftMs === null) ttftMs = performance.now() - t0;
-          chunkCount += 1;
+          if (firstContentTs === null) firstContentTs = performance.now();
+          contentChunks += 1;
         }
       }
     }
-    const totalMs = Math.round(performance.now() - t0);
-
-    if (ttftMs === null) {
-      return fail('no_content', '未收到任何输出内容（流为空）');
-    }
+    const tEnd = performance.now();
+    const totalMs = Math.round(tEnd - t0);
 
     const hasUsage = usage && Number.isFinite(Number(usage.completion_tokens));
     const estimated = hasUsage ? 0 : 1;
-    const completionTokens = hasUsage ? Number(usage.completion_tokens) : chunkCount;
-    const ttft = Math.round(ttftMs);
-    const genMs = Math.max(totalMs - ttft, 1);
-    return ok({
-      ttft_ms: ttft,
+    const completionTokens = hasUsage ? Number(usage.completion_tokens) : reasoningChunks + contentChunks;
+    const detailReasoning = usage?.completion_tokens_details?.reasoning_tokens;
+    const reasoningTokens = Number.isFinite(Number(detailReasoning))
+      ? Number(detailReasoning)
+      : (hasUsage ? 0 : reasoningChunks);
+    const contentTokens = hasUsage ? Math.max(0, completionTokens - reasoningTokens) : contentChunks;
+
+    const ttftMs = firstContentTs ? Math.round(firstContentTs - t0) : null;
+    // 思考阶段：首个思考分块 → 首个可见输出（若无可见输出则到流结束）
+    const reasoningDurMs = firstReasoningTs ? Math.round((firstContentTs || tEnd) - firstReasoningTs) : 0;
+    // 输出阶段：首个可见输出 → 流结束
+    const contentDurMs = firstContentTs ? Math.round(tEnd - firstContentTs) : 0;
+
+    const outputTps = contentTokens > 0 && contentDurMs > 0 ? round2(contentTokens / (contentDurMs / 1000)) : null;
+    const reasoningTps = reasoningTokens > 0 && reasoningDurMs > 0 ? round2(reasoningTokens / (reasoningDurMs / 1000)) : null;
+    const avgTps = completionTokens > 0 ? round2(completionTokens / (totalMs / 1000)) : null;
+
+    const base = {
+      ttft_ms: ttftMs,
       total_ms: totalMs,
       completion_tokens: completionTokens,
       estimated,
-      tps: round2(completionTokens / (genMs / 1000)),
-      avg_tps: round2(completionTokens / (totalMs / 1000)),
+      reasoning_tokens: reasoningTokens,
+      reasoning_ms: reasoningDurMs,
+      reasoning_tps: reasoningTps,
+      content_tokens: contentTokens,
       prompt_tokens: usage?.prompt_tokens ?? null,
-    });
+    };
+
+    if (firstContentTs === null) {
+      // 无可见输出：可能是思考阶段耗尽 max_tokens
+      const hasReasoning = reasoningTokens > 0;
+      return {
+        status: 'error',
+        ...base,
+        tps: null,
+        avg_tps: avgTps,
+        error_type: 'no_content',
+        error_message: hasReasoning
+          ? '思考阶段耗尽 max_tokens，未产生可见输出；可调大 max_tokens 或降低思考强度'
+          : '未收到任何输出内容（流为空）',
+      };
+    }
+
+    return { status: 'ok', ...base, tps: outputTps, avg_tps: avgTps, error_type: null, error_message: null };
   } catch (err) {
     if (timedOut || err?.name === 'AbortError' || err?.name === 'TimeoutError') {
       return fail('timeout', `请求超时（${timeoutMs}ms）`);
@@ -172,7 +218,7 @@ async function runProbe(model) {
 
 /**
  * 对一个模型执行一次探测。
- * @param model 模型记录（至少含 base_url/api_key/model/prompt/max_tokens/timeout_ms）
+ * @param model 模型记录（含 base_url/api_key/model/prompt/max_tokens/timeout_ms/thinking_strength）
  * @param opts.persist 是否写入 probe_results
  */
 export async function probeModel(model, { persist = true } = {}) {

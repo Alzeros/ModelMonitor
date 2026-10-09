@@ -214,7 +214,7 @@ export function DashboardPage() {
                           <span className="text-3xl font-semibold tabular-nums">
                             {fmtTps(latest.tps)}
                           </span>
-                          <span className="text-sm text-muted-foreground">tokens/s</span>
+                          <span className="text-sm text-muted-foreground">输出 tok/s</span>
                           {latest.estimated === 1 ? (
                             <Badge variant="secondary" className="text-[10px]">
                               估算
@@ -226,8 +226,13 @@ export function DashboardPage() {
                             <Timer className="size-3" />首字 {fmtMs(latest.ttft_ms)}
                           </span>
                           <span>总耗时 {fmtMs(latest.total_ms)}</span>
-                          <span>输出 {latest.completion_tokens} tok</span>
+                          <span>可见 {latest.content_tokens} tok</span>
                         </div>
+                        {latest.reasoning_tokens && latest.reasoning_tokens > 0 ? (
+                          <p className="mt-1 text-xs text-amber-600 dark:text-amber-400" title="思考阶段：token 数 / 速度 / 耗时">
+                            思考 {latest.reasoning_tokens} tok · {fmtTps(latest.reasoning_tps)} tok/s · {fmtMs(latest.reasoning_ms)}
+                          </p>
+                        ) : null}
                       </div>
                     ) : (
                       <div className="min-h-[52px] text-sm">

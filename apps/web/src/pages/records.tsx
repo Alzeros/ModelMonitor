@@ -152,17 +152,18 @@ export function RecordsPage() {
                 <TableHead>时间</TableHead>
                 <TableHead>模型</TableHead>
                 <TableHead>状态</TableHead>
-                <TableHead>TPS</TableHead>
+                <TableHead>输出 T/s</TableHead>
                 <TableHead className="hidden sm:table-cell">首字</TableHead>
                 <TableHead className="hidden sm:table-cell">总耗时</TableHead>
-                <TableHead className="hidden md:table-cell">输出 tok</TableHead>
+                <TableHead className="hidden md:table-cell">可见 tok</TableHead>
+                <TableHead className="hidden md:table-cell">思考 tok</TableHead>
                 <TableHead className="hidden lg:table-cell">错误信息</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {data.items.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
+                  <TableCell colSpan={9} className="py-8 text-center text-sm text-muted-foreground">
                     {loading ? '加载中…' : '暂无记录'}
                   </TableCell>
                 </TableRow>
@@ -218,7 +219,13 @@ export function RecordsPage() {
                       {fmtMs(p.total_ms)}
                     </TableCell>
                     <TableCell className="hidden tabular-nums md:table-cell">
-                      {p.completion_tokens ?? '—'}
+                      {p.content_tokens ?? '—'}
+                    </TableCell>
+                    <TableCell
+                      className="hidden tabular-nums md:table-cell"
+                      title={p.reasoning_tps != null ? `思考速度 ${fmtTps(p.reasoning_tps)} tok/s · ${fmtMs(p.reasoning_ms)}` : ''}
+                    >
+                      {p.reasoning_tokens ? p.reasoning_tokens : '—'}
                     </TableCell>
                     <TableCell
                       className="hidden max-w-[260px] truncate text-xs text-muted-foreground lg:table-cell"

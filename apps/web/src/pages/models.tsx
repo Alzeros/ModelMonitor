@@ -41,6 +41,13 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   Table,
   TableBody,
   TableCell,
@@ -128,6 +135,7 @@ export function ModelsPage() {
   const [loadingList, setLoadingList] = useState(false)
   const [listError, setListError] = useState<string | null>(null)
   const [addingModels, setAddingModels] = useState(false)
+  const [addThinking, setAddThinking] = useState<'default' | 'low' | 'high' | 'max'>('default')
 
   // 探测与删除
   const [probingIds, setProbingIds] = useState<Set<number>>(new Set())
@@ -252,6 +260,7 @@ export function ModelsPage() {
     setRemoteList(null)
     setSelected(new Set())
     setListError(null)
+    setAddThinking('default')
     setAddOpen(true)
   }
 
@@ -286,7 +295,7 @@ export function ModelsPage() {
     if (!addFor || !pendingModels.length) return
     setAddingModels(true)
     try {
-      const r = await api.addProviderModels(addFor.id, pendingModels)
+      const r = await api.addProviderModels(addFor.id, pendingModels, addThinking)
       toast.success(
         `已添加 ${r.added} 个模型${r.skipped.length ? `，跳过已存在：${r.skipped.join('、')}` : ''}`
       )
@@ -326,7 +335,16 @@ export function ModelsPage() {
 
   const toggleModelEnabled = async (m: ModelWithLatest, enabled: boolean) => {
     try {
-      await api.updateModelEnabled(m.id, enabled)
+      await api.updateModel(m.id, { enabled })
+      await load()
+    } catch (e) {
+      toast.error((e as Error).message)
+    }
+  }
+
+  const setModelThinking = async (m: ModelWithLatest, thinking_strength: string) => {
+    try {
+      await api.updateModel(m.id, { thinking_strength })
       await load()
     } catch (e) {
       toast.error((e as Error).message)
@@ -439,6 +457,7 @@ export function ModelsPage() {
                           <TableHead className="hidden sm:table-cell">首字</TableHead>
                           <TableHead className="hidden md:table-cell">上次探测</TableHead>
                           <TableHead>启用</TableHead>
+                          <TableHead className="hidden lg:table-cell">思考</TableHead>
                           <TableHead className="text-right">操作</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -471,6 +490,22 @@ export function ModelsPage() {
                                 onCheckedChange={(v) => void toggleModelEnabled(m, v)}
                                 aria-label={`启用 ${m.model}`}
                               />
+                            </TableCell>
+                            <TableCell className="hidden lg:table-cell">
+                              <Select
+                                value={m.thinking_strength}
+                                onValueChange={(v) => void setModelThinking(m, v)}
+                              >
+                                <SelectTrigger className="h-8 w-[84px] text-xs" aria-label={`思考强度 ${m.model}`}>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="default">默认</SelectItem>
+                                  <SelectItem value="low">low</SelectItem>
+                                  <SelectItem value="high">high</SelectItem>
+                                  <SelectItem value="max">max</SelectItem>
+                                </SelectContent>
+                              </Select>
                             </TableCell>
                             <TableCell className="text-right">
                               <div className="flex justify-end gap-1">
@@ -742,6 +777,27 @@ export function ModelsPage() {
                 保存时将添加 {pendingModels.length} 个：{pendingModels.join('、')}
               </p>
             ) : null}
+
+            <div className="grid gap-2">
+              <Label>思考强度（批量应用到本次添加的模型）</Label>
+              <Select
+                value={addThinking}
+                onValueChange={(v) => setAddThinking(v as 'default' | 'low' | 'high' | 'max')}
+              >
+                <SelectTrigger className="w-[200px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default">默认（不发送，用模型自身默认）</SelectItem>
+                  <SelectItem value="low">low</SelectItem>
+                  <SelectItem value="high">high</SelectItem>
+                  <SelectItem value="max">max</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                思考型模型建议选 low（测接近纯解码吞吐）；非思考模型选默认即可
+              </p>
+            </div>
           </div>
 
           <DialogFooter>
