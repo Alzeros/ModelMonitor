@@ -1,7 +1,9 @@
 import { DEFAULT_PROMPT, insertProbeResult } from './db.mjs';
 
-function joinUrl(base, suffix) {
-  return `${String(base).replace(/\/+$/, '')}${suffix}`;
+/** 由 base_url 计算实际请求地址；兼容用户直接粘贴完整接口地址的情况 */
+function buildChatUrl(base) {
+  const b = String(base).trim().replace(/\/+$/, '').replace(/\/chat\/completions$/i, '');
+  return `${b}/chat/completions`;
 }
 
 function truncate(s, n = 500) {
@@ -40,8 +42,8 @@ function fail(type, message) {
   };
 }
 
-async function doFetch(model, { maxTokens, useStreamOptions, signal }) {
-  return fetch(joinUrl(model.base_url, '/chat/completions'), {
+async function doFetch(model, url, { maxTokens, useStreamOptions, signal }) {
+  return fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -70,15 +72,30 @@ async function runProbe(model) {
   }, timeoutMs);
 
   try {
-    let res = await doFetch(model, { maxTokens, useStreamOptions: true, signal: controller.signal });
+    // 候选地址：用户填的 base_url 可能缺少 /v1，404/405 时自动补 /v1 重试
+    const candidates = [buildChatUrl(model.base_url)];
+    if (!candidates[0].includes('/v1/')) {
+      candidates.push(candidates[0].replace('/chat/completions', '/v1/chat/completions'));
+    }
+    let lastUrl = candidates[0];
+    let res = null;
+    for (const url of candidates) {
+      lastUrl = url;
+      res = await doFetch(model, url, { maxTokens, useStreamOptions: true, signal: controller.signal });
+      if (res.status === 404 || res.status === 405) continue;
+      break;
+    }
     // 部分兼容服务不认识 stream_options 会返回 400，去掉该参数重试一次
     if (res.status === 400) {
-      res = await doFetch(model, { maxTokens, useStreamOptions: false, signal: controller.signal });
+      res = await doFetch(model, lastUrl, { maxTokens, useStreamOptions: false, signal: controller.signal });
     }
 
     if (!res.ok) {
       const bodyText = await res.text().catch(() => '');
-      return fail(classifyStatus(res.status), `HTTP ${res.status} ${res.statusText}${bodyText ? `: ${bodyText}` : ''}`);
+      return fail(
+        classifyStatus(res.status),
+        `HTTP ${res.status} ${res.statusText} @ ${lastUrl}${bodyText ? `: ${bodyText}` : ''}`
+      );
     }
     if (!res.body) {
       return fail('no_response_body', '响应没有可读的流');

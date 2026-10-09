@@ -53,6 +53,12 @@ import { Textarea } from '@/components/ui/textarea'
 
 const DEFAULT_PROMPT = 'Say "hello" and nothing else.'
 
+/** 与后端 buildChatUrl 保持一致：兼容直接粘贴完整接口地址 */
+function buildChatUrl(base: string): string {
+  const b = base.trim().replace(/\/+$/, '').replace(/\/chat\/completions$/i, '')
+  return `${b}/chat/completions`
+}
+
 interface FormState {
   name: string
   base_url: string
@@ -431,8 +437,14 @@ export function ModelsPage() {
                 onChange={(e) => setField('base_url', e.target.value)}
                 placeholder="https://api.example.com/v1"
               />
-              <p className="text-xs text-muted-foreground">
-                将请求 <code className="font-mono">{`{Base URL}/chat/completions`}</code>
+              <p className="text-xs break-all text-muted-foreground">
+                实际请求{' '}
+                <code className="font-mono">
+                  {form.base_url.trim()
+                    ? buildChatUrl(form.base_url)
+                    : '{Base URL}/chat/completions'}
+                </code>
+                （直接粘贴完整接口地址也能自动识别）
               </p>
             </div>
 
