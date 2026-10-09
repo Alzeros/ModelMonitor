@@ -16,6 +16,7 @@ if (fs.existsSync(distDir)) {
   await app.register(fastifyStatic, {
     root: distDir,
     wildcard: false,
+    cacheControl: false, // 关闭插件默认头，用下方 setHeaders 的策略
     setHeaders: (res, pathname) => {
       if (pathname.endsWith('.html')) {
         // HTML 必须每次重验证，避免缓存旧页引用已被新构建替换的资源
