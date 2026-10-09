@@ -51,7 +51,7 @@ ModelMonitor/
 | 层 | 选型 |
 |---|---|
 | 前端 | React 18、TypeScript、Vite、Tailwind CSS、shadcn/ui、Recharts |
-| 后端 | Node.js（ESM）、Fastify、@fastify/static、better-sqlite3、node-cron |
+| 后端 | Node.js（ESM）、Fastify、@fastify/static、better-sqlite3、原生 setTimeout/setInterval 定时调度 |
 | 存储 | SQLite 单文件 `data/monitor.db` |
 
 ## 4. 核心探测逻辑
@@ -119,13 +119,14 @@ CREATE TABLE IF NOT EXISTS settings (
 | GET/POST | `/api/models` | 列表 / 新增 |
 | GET/PUT/DELETE | `/api/models/:id` | 详情 / 更新 / 删除（级联删记录） |
 | POST | `/api/models/:id/probe` | 手动立即探测一次（"测试连接"复用） |
+| POST | `/api/probe-test` | 用临时配置探测一次（不落库），供新增模型前"测试连接" |
 | GET | `/api/models/:id/summary?range=1h\|6h\|24h\|7d` | 最新值 + 区间 avg/P95（成功记录） |
 | GET | `/api/probes?model_id=&status=&range=&limit=` | 原始记录，时间倒序分页 |
 | GET/PUT | `/api/settings` | 全局默认间隔等（保留扩展） |
 
 ## 7. 调度器
 
-- 服务启动时为所有 `enabled=1` 的模型注册 node-cron 任务：`*/n * * * *`（n=间隔分钟）
+- 服务启动时为所有 `enabled=1` 的模型按 `interval_minutes` 用原生 `setInterval` 独立调度（比 cron 对齐更精确）
 - 首次注册延迟随机 jitter（0~30s）错峰；同一模型探测中则跳过本轮（防重叠）
 - 模型增删改后动态重载调度；进程重启自动恢复
 
