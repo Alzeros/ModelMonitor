@@ -7,6 +7,14 @@ export const RANGE_OPTIONS: { value: RangeKey; label: string }[] = [
   { value: '24h', label: '24 小时' },
 ]
 
+/** 各时间范围对应的毫秒数（与后端 RANGE_MS 保持一致） */
+export const RANGE_MS: Record<RangeKey, number> = {
+  '30m': 1_800_000,
+  '1h': 3_600_000,
+  '8h': 28_800_000,
+  '24h': 86_400_000,
+}
+
 /** 供应商：OpenAI 兼容接入点，探测参数挂在供应商上 */
 export interface Provider {
   id: number

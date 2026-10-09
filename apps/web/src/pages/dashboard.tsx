@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 import {
@@ -20,9 +20,11 @@ import { api } from '@/lib/api'
 import { colorForIndex, fmtMs, fmtTps, fmtTimeTick, timeAgo } from '@/lib/format'
 import {
   ERROR_TYPE_LABELS,
+  RANGE_MS,
   RANGE_OPTIONS,
   modelName,
   type ModelWithLatest,
+  type ProbeResult,
   type RangeKey,
   type Summary,
 } from '@/lib/types'
@@ -31,6 +33,13 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 
 type Row = { time: string } & Record<string, number | string>
@@ -65,9 +74,9 @@ function loadRange(): RangeKey {
   return '24h'
 }
 
-function loadHiddenIds(): Set<number> {
+function loadHiddenIds(storageKey: string): Set<number> {
   try {
-    const raw = localStorage.getItem(HIDDEN_STORAGE_KEY)
+    const raw = localStorage.getItem(storageKey)
     const arr = raw ? (JSON.parse(raw) as unknown) : []
     if (Array.isArray(arr)) return new Set(arr.filter((v) => typeof v === 'number' && Number.isFinite(v)))
   } catch {
@@ -76,12 +85,125 @@ function loadHiddenIds(): Set<number> {
   return new Set()
 }
 
+function loadTrendRange(key: string): RangeKey {
+  try {
+    const v = localStorage.getItem(key)
+    if (v && RANGE_OPTIONS.some((o) => o.value === v)) return v as RangeKey
+  } catch {
+    /* ignore */
+  }
+  return '24h'
+}
+
+function persist(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    /* ignore */
+  }
+}
+
+type RawProbes = Record<number, ProbeResult[]>
+
+/** 把探测记录按指标与时间桶聚合：同桶内取平均值，让多模型折线在时间轴上对齐 */
+function buildTrendRows(probes: RawProbes, prefix: 'tps' | 'ttft', rk: RangeKey): Row[] {
+  const bucketMs = BUCKET_MS[rk]
+  const since = Date.now() - RANGE_MS[rk]
+  type Acc = { t: number; sums: Record<string, { s: number; c: number }> }
+  const acc = new Map<number, Acc>()
+  for (const arr of Object.values(probes)) {
+    for (const p of arr) {
+      if (p.valid === 0) continue
+      const v = prefix === 'tps' ? p.tps : p.ttft_ms
+      if (v == null) continue
+      const t0 = new Date(p.created_at).getTime()
+      if (t0 < since) continue
+      const t = Math.floor(t0 / bucketMs) * bucketMs
+      let row = acc.get(t)
+      if (!row) {
+        row = { t, sums: {} }
+        acc.set(t, row)
+      }
+      const k = `${prefix}_${p.model_id}`
+      const s = row.sums[k] ?? { s: 0, c: 0 }
+      s.s += v
+      s.c += 1
+      row.sums[k] = s
+    }
+  }
+  return [...acc.values()]
+    .sort((a, b) => a.t - b.t)
+    .map((row) => {
+      const out: Row = { time: new Date(row.t).toISOString() }
+      for (const [k, v] of Object.entries(row.sums)) {
+        out[k] = Math.round((v.s / v.c) * 100) / 100
+      }
+      return out
+    })
+}
+
+/** 图表卡片里的模型选择 chips：色点颜色与折线/条形一致，点击切换是否参与图表 */
+function ModelChips({
+  models,
+  hidden,
+  onToggle,
+}: {
+  models: ModelWithLatest[]
+  hidden: Set<number>
+  onToggle: (id: number) => void
+}) {
+  return (
+    <div className="mb-3 flex flex-wrap gap-1.5">
+      {models.map((m, i) => {
+        const on = !hidden.has(m.id)
+        return (
+          <Button
+            key={m.id}
+            type="button"
+            size="sm"
+            variant={on ? 'outline' : 'ghost'}
+            className={cn('h-7 gap-1.5 px-2.5 text-xs', !on && 'text-muted-foreground/50')}
+            title={on ? '点击从图表中移除' : '点击加入图表'}
+            onClick={() => onToggle(m.id)}
+          >
+            <span
+              className="size-2 shrink-0 rounded-full"
+              style={{ backgroundColor: colorForIndex(i), opacity: on ? 1 : 0.35 }}
+            />
+            {modelName(m)}
+          </Button>
+        )
+      })}
+    </div>
+  )
+}
+
+function makeToggle(
+  setter: Dispatch<SetStateAction<Set<number>>>,
+  storageKey: string
+): (id: number) => void {
+  return (id) => {
+    setter((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      persist(storageKey, [...next])
+      return next
+    })
+  }
+}
+
 export function DashboardPage() {
   const [range, setRange] = useState<RangeKey>(loadRange)
-  const [hiddenIds, setHiddenIds] = useState<Set<number>>(loadHiddenIds)
+  const [hiddenIds, setHiddenIds] = useState<Set<number>>(() => loadHiddenIds(HIDDEN_STORAGE_KEY))
   const [models, setModels] = useState<ModelWithLatest[]>([])
   const [summaries, setSummaries] = useState<Record<number, Summary | null>>({})
-  const [rows, setRows] = useState<Row[]>([])
+  // 探测记录（一次拉 24h 内全量，趋势图按各自范围过滤/分桶）
+  const [rawProbes, setRawProbes] = useState<RawProbes>({})
+  const [tpsRange, setTpsRange] = useState<RangeKey>(() => loadTrendRange('dashboard.trend.tps.range'))
+  const [ttftRange, setTtftRange] = useState<RangeKey>(() => loadTrendRange('dashboard.trend.ttft.range'))
+  const [tpsHidden, setTpsHidden] = useState<Set<number>>(() => loadHiddenIds('dashboard.trend.tps.hidden'))
+  const [ttftHidden, setTtftHidden] = useState<Set<number>>(() => loadHiddenIds('dashboard.trend.ttft.hidden'))
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [probing, setProbing] = useState<Set<number>>(new Set())
@@ -95,7 +217,7 @@ export function DashboardPage() {
         const ids = items.map((m) => m.id)
         if (!ids.length) {
           setSummaries({})
-          setRows([])
+          setRawProbes({})
           return
         }
         const [sumRes, probeRes] = await Promise.all([
@@ -103,7 +225,7 @@ export function DashboardPage() {
           Promise.all(
             ids.map((id) =>
               api
-                .listProbes({ model_id: id, range, status: 'ok', order: 'asc', limit: 1000 })
+                .listProbes({ model_id: id, range: '24h', status: 'ok', order: 'asc', limit: 1000 })
                 .catch(() => ({ total: 0, items: [] }))
             )
           ),
@@ -114,43 +236,11 @@ export function DashboardPage() {
         })
         setSummaries(sm)
 
-        // 按时间桶聚合：同桶内取各模型的平均值，让多模型的折线在时间轴上对齐
-        const bucketMs = BUCKET_MS[range]
-        type Acc = { t: number; sums: Record<string, { s: number; c: number }> }
-        const acc = new Map<number, Acc>()
+        const raw: RawProbes = {}
         probeRes.forEach((pr, i) => {
-          const id = ids[i]
-          for (const p of pr.items) {
-            if (p.valid === 0) continue
-            const t = Math.floor(new Date(p.created_at).getTime() / bucketMs) * bucketMs
-            let row = acc.get(t)
-            if (!row) {
-              row = { t, sums: {} }
-              acc.set(t, row)
-            }
-            const pairs = [
-              [`tps_${id}`, p.tps],
-              [`ttft_${id}`, p.ttft_ms],
-            ] as const
-            for (const [k, v] of pairs) {
-              if (v == null) continue
-              const s = row.sums[k] ?? { s: 0, c: 0 }
-              s.s += v
-              s.c += 1
-              row.sums[k] = s
-            }
-          }
+          raw[ids[i]] = pr.items.filter((p) => p.valid === 1)
         })
-        const nextRows: Row[] = [...acc.values()]
-          .sort((a, b) => a.t - b.t)
-          .map((row) => {
-            const out: Row = { time: new Date(row.t).toISOString() }
-            for (const [k, v] of Object.entries(row.sums)) {
-              out[k] = Math.round((v.s / v.c) * 100) / 100
-            }
-            return out
-          })
-        setRows(nextRows)
+        setRawProbes(raw)
       } catch (e) {
         toast.error(`加载失败：${(e as Error).message}`)
       } finally {
@@ -210,22 +300,32 @@ export function DashboardPage() {
     return list.sort((a, b) => b.tps - a.tps)
   }, [models, summaries, hiddenIds])
 
-  const toggleCompare = (id: number) => {
-    setHiddenIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      try {
-        localStorage.setItem(HIDDEN_STORAGE_KEY, JSON.stringify([...next]))
-      } catch {
-        /* ignore */
-      }
-      return next
-    })
+  const toggleCompare = makeToggle(setHiddenIds, HIDDEN_STORAGE_KEY)
+  const toggleTpsHidden = makeToggle(setTpsHidden, 'dashboard.trend.tps.hidden')
+  const toggleTtftHidden = makeToggle(setTtftHidden, 'dashboard.trend.ttft.hidden')
+
+  const changeTpsRange = (v: string) => {
+    setTpsRange(v as RangeKey)
+    try {
+      localStorage.setItem('dashboard.trend.tps.range', v)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const changeTtftRange = (v: string) => {
+    setTtftRange(v as RangeKey)
+    try {
+      localStorage.setItem('dashboard.trend.ttft.range', v)
+    } catch {
+      /* ignore */
+    }
   }
 
   const hasCompare = compareData.length > 0
-  const hasOkData = rows.length > 0
+  const hasOkData = useMemo(() => Object.values(rawProbes).some((arr) => arr.length > 0), [rawProbes])
+  const tpsRows = useMemo(() => buildTrendRows(rawProbes, 'tps', tpsRange), [rawProbes, tpsRange])
+  const ttftRows = useMemo(() => buildTrendRows(rawProbes, 'ttft', ttftRange), [rawProbes, ttftRange])
 
   return (
     <div className="space-y-6">
@@ -288,30 +388,7 @@ export function DashboardPage() {
               <CardTitle className="text-base">模型对比 · 平均输出速度（tok/s）</CardTitle>
             </CardHeader>
             <CardContent>
-              {models.length > 0 ? (
-                <div className="mb-3 flex flex-wrap gap-1.5">
-                  {models.map((m, i) => {
-                    const on = !hiddenIds.has(m.id)
-                    return (
-                      <Button
-                        key={m.id}
-                        type="button"
-                        size="sm"
-                        variant={on ? 'outline' : 'ghost'}
-                        className={cn('h-7 gap-1.5 px-2.5 text-xs', !on && 'text-muted-foreground/50')}
-                        title={on ? '点击从对比图中移除' : '点击加入对比'}
-                        onClick={() => toggleCompare(m.id)}
-                      >
-                        <span
-                          className="size-2 shrink-0 rounded-full"
-                          style={{ backgroundColor: colorForIndex(i), opacity: on ? 1 : 0.35 }}
-                        />
-                        {modelName(m)}
-                      </Button>
-                    )
-                  })}
-                </div>
-              ) : null}
+              <ModelChips models={models} hidden={hiddenIds} onToggle={toggleCompare} />
               {hasCompare ? (
                 <ResponsiveContainer width="100%" height={Math.max(200, compareData.length * 34 + 40)}>
                   <BarChart data={compareData} layout="vertical" margin={{ top: 4, right: 56, bottom: 0, left: 4 }}>
@@ -482,86 +559,132 @@ export function DashboardPage() {
           {hasOkData ? (
             <div className="grid gap-4 lg:grid-cols-2">
               <Card>
-                <CardHeader>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0">
                   <CardTitle className="text-base">输出速度趋势（tok/s）</CardTitle>
+                  <Select value={tpsRange} onValueChange={changeTpsRange}>
+                    <SelectTrigger className="h-8 w-[104px]" aria-label="输出速度趋势时间范围">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {RANGE_OPTIONS.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </CardHeader>
                 <CardContent>
-                  <ResponsiveContainer width="100%" height={280}>
-                    <LineChart data={rows} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                      <XAxis
-                        dataKey="time"
-                        tickFormatter={(v: string) => fmtTimeTick(v, range)}
-                        minTickGap={48}
-                        tick={{ fontSize: 11 }}
-                        stroke="hsl(var(--muted-foreground))"
-                      />
-                      <YAxis tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" width={48} />
-                      <Tooltip
-                        contentStyle={TOOLTIP_STYLE}
-                        labelFormatter={(v) => fmtTimeTick(String(v), range)}
-                      />
-                      <Legend wrapperStyle={{ fontSize: 11 }} iconSize={10} />
-                      {models.map((m, i) => (
-                        <Line
-                          key={m.id}
-                          type="monotone"
-                          dataKey={`tps_${m.id}`}
-                          name={modelName(m)}
-                          stroke={colorForIndex(i)}
-                          strokeWidth={2}
-                          dot={false}
-                          connectNulls
+                  <ModelChips models={models} hidden={tpsHidden} onToggle={toggleTpsHidden} />
+                  {tpsRows.length > 0 ? (
+                    <ResponsiveContainer width="100%" height={280}>
+                      <LineChart data={tpsRows} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                        <XAxis
+                          dataKey="time"
+                          tickFormatter={(v: string) => fmtTimeTick(v, tpsRange)}
+                          minTickGap={48}
+                          tick={{ fontSize: 11 }}
+                          stroke="hsl(var(--muted-foreground))"
                         />
-                      ))}
-                    </LineChart>
-                  </ResponsiveContainer>
+                        <YAxis tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" width={48} />
+                        <Tooltip
+                          contentStyle={TOOLTIP_STYLE}
+                          labelFormatter={(v) => fmtTimeTick(String(v), tpsRange)}
+                        />
+                        <Legend wrapperStyle={{ fontSize: 11 }} iconSize={10} />
+                        {models.map((m, i) =>
+                          tpsHidden.has(m.id) ? null : (
+                            <Line
+                              key={m.id}
+                              type="monotone"
+                              dataKey={`tps_${m.id}`}
+                              name={modelName(m)}
+                              stroke={colorForIndex(i)}
+                              strokeWidth={2}
+                              dot={false}
+                              connectNulls
+                            />
+                          )
+                        )}
+                      </LineChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="flex h-[280px] items-center justify-center text-sm text-muted-foreground">
+                      {models.some((m) => !tpsHidden.has(m.id))
+                        ? '所选时间范围内暂无探测数据'
+                        : '未选择要展示的模型，点击上方选项加入'}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 
               <Card>
-                <CardHeader>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0">
                   <CardTitle className="text-base">首字时间趋势（TTFT）</CardTitle>
+                  <Select value={ttftRange} onValueChange={changeTtftRange}>
+                    <SelectTrigger className="h-8 w-[104px]" aria-label="首字时间趋势时间范围">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {RANGE_OPTIONS.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </CardHeader>
                 <CardContent>
-                  <ResponsiveContainer width="100%" height={280}>
-                    <LineChart data={rows} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                      <XAxis
-                        dataKey="time"
-                        tickFormatter={(v: string) => fmtTimeTick(v, range)}
-                        minTickGap={48}
-                        tick={{ fontSize: 11 }}
-                        stroke="hsl(var(--muted-foreground))"
-                      />
-                      <YAxis
-                        tick={{ fontSize: 11 }}
-                        stroke="hsl(var(--muted-foreground))"
-                        width={48}
-                        tickFormatter={(v: number) =>
-                          v >= 1000 ? `${Math.round(v / 100) / 10}s` : `${v}ms`
-                        }
-                      />
-                      <Tooltip
-                        contentStyle={TOOLTIP_STYLE}
-                        labelFormatter={(v) => fmtTimeTick(String(v), range)}
-                        formatter={(value) => [fmtMs(Number(value)), undefined]}
-                      />
-                      <Legend wrapperStyle={{ fontSize: 11 }} iconSize={10} />
-                      {models.map((m, i) => (
-                        <Line
-                          key={m.id}
-                          type="monotone"
-                          dataKey={`ttft_${m.id}`}
-                          name={modelName(m)}
-                          stroke={colorForIndex(i)}
-                          strokeWidth={2}
-                          dot={false}
-                          connectNulls
+                  <ModelChips models={models} hidden={ttftHidden} onToggle={toggleTtftHidden} />
+                  {ttftRows.length > 0 ? (
+                    <ResponsiveContainer width="100%" height={280}>
+                      <LineChart data={ttftRows} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                        <XAxis
+                          dataKey="time"
+                          tickFormatter={(v: string) => fmtTimeTick(v, ttftRange)}
+                          minTickGap={48}
+                          tick={{ fontSize: 11 }}
+                          stroke="hsl(var(--muted-foreground))"
                         />
-                      ))}
-                    </LineChart>
-                  </ResponsiveContainer>
+                        <YAxis
+                          tick={{ fontSize: 11 }}
+                          stroke="hsl(var(--muted-foreground))"
+                          width={48}
+                          tickFormatter={(v: number) =>
+                            v >= 1000 ? `${Math.round(v / 100) / 10}s` : `${v}ms`
+                          }
+                        />
+                        <Tooltip
+                          contentStyle={TOOLTIP_STYLE}
+                          labelFormatter={(v) => fmtTimeTick(String(v), ttftRange)}
+                          formatter={(value) => [fmtMs(Number(value)), undefined]}
+                        />
+                        <Legend wrapperStyle={{ fontSize: 11 }} iconSize={10} />
+                        {models.map((m, i) =>
+                          ttftHidden.has(m.id) ? null : (
+                            <Line
+                              key={m.id}
+                              type="monotone"
+                              dataKey={`ttft_${m.id}`}
+                              name={modelName(m)}
+                              stroke={colorForIndex(i)}
+                              strokeWidth={2}
+                              dot={false}
+                              connectNulls
+                            />
+                          )
+                        )}
+                      </LineChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="flex h-[280px] items-center justify-center text-sm text-muted-foreground">
+                      {models.some((m) => !ttftHidden.has(m.id))
+                        ? '所选时间范围内暂无探测数据'
+                        : '未选择要展示的模型，点击上方选项加入'}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
