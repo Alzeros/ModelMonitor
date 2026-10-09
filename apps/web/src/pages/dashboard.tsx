@@ -52,6 +52,9 @@ const BUCKET_MS: Record<RangeKey, number> = {
 
 const RANGE_STORAGE_KEY = 'dashboard.range'
 
+/** 对比图隐藏的模型（未勾选）：存 id 列表，新增模型默认显示 */
+const HIDDEN_STORAGE_KEY = 'dashboard.compare.hidden'
+
 function loadRange(): RangeKey {
   try {
     const v = localStorage.getItem(RANGE_STORAGE_KEY)
@@ -62,8 +65,20 @@ function loadRange(): RangeKey {
   return '24h'
 }
 
+function loadHiddenIds(): Set<number> {
+  try {
+    const raw = localStorage.getItem(HIDDEN_STORAGE_KEY)
+    const arr = raw ? (JSON.parse(raw) as unknown) : []
+    if (Array.isArray(arr)) return new Set(arr.filter((v) => typeof v === 'number' && Number.isFinite(v)))
+  } catch {
+    /* ignore */
+  }
+  return new Set()
+}
+
 export function DashboardPage() {
   const [range, setRange] = useState<RangeKey>(loadRange)
+  const [hiddenIds, setHiddenIds] = useState<Set<number>>(loadHiddenIds)
   const [models, setModels] = useState<ModelWithLatest[]>([])
   const [summaries, setSummaries] = useState<Record<number, Summary | null>>({})
   const [rows, setRows] = useState<Row[]>([])
@@ -182,17 +197,32 @@ export function DashboardPage() {
     [load]
   )
 
-  /** 模型对比数据：取各模型所选时间范围内的平均输出速度，降序排列 */
+  /** 模型对比数据：勾选的模型按所选时间范围的平均输出速度，降序排列 */
   const compareData = useMemo(() => {
     const list: { name: string; tps: number; color: string }[] = []
     models.forEach((m, i) => {
+      if (hiddenIds.has(m.id)) return
       const avg = summaries[m.id]?.stats.tps.avg
       if (avg != null) {
         list.push({ name: modelName(m), tps: avg, color: colorForIndex(i) })
       }
     })
     return list.sort((a, b) => b.tps - a.tps)
-  }, [models, summaries])
+  }, [models, summaries, hiddenIds])
+
+  const toggleCompare = (id: number) => {
+    setHiddenIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      try {
+        localStorage.setItem(HIDDEN_STORAGE_KEY, JSON.stringify([...next]))
+      } catch {
+        /* ignore */
+      }
+      return next
+    })
+  }
 
   const hasCompare = compareData.length > 0
   const hasOkData = rows.length > 0
@@ -258,6 +288,30 @@ export function DashboardPage() {
               <CardTitle className="text-base">模型对比 · 平均输出速度（tok/s）</CardTitle>
             </CardHeader>
             <CardContent>
+              {models.length > 0 ? (
+                <div className="mb-3 flex flex-wrap gap-1.5">
+                  {models.map((m, i) => {
+                    const on = !hiddenIds.has(m.id)
+                    return (
+                      <Button
+                        key={m.id}
+                        type="button"
+                        size="sm"
+                        variant={on ? 'outline' : 'ghost'}
+                        className={cn('h-7 gap-1.5 px-2.5 text-xs', !on && 'text-muted-foreground/50')}
+                        title={on ? '点击从对比图中移除' : '点击加入对比'}
+                        onClick={() => toggleCompare(m.id)}
+                      >
+                        <span
+                          className="size-2 shrink-0 rounded-full"
+                          style={{ backgroundColor: colorForIndex(i), opacity: on ? 1 : 0.35 }}
+                        />
+                        {modelName(m)}
+                      </Button>
+                    )
+                  })}
+                </div>
+              ) : null}
               {hasCompare ? (
                 <ResponsiveContainer width="100%" height={Math.max(200, compareData.length * 34 + 40)}>
                   <BarChart data={compareData} layout="vertical" margin={{ top: 4, right: 56, bottom: 0, left: 4 }}>
@@ -292,9 +346,13 @@ export function DashboardPage() {
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
-              ) : (
+              ) : models.some((m) => !hiddenIds.has(m.id)) ? (
                 <div className="flex h-[120px] items-center justify-center text-sm text-muted-foreground">
                   暂无有效的探测数据，等待定时探测或手动探测
+                </div>
+              ) : (
+                <div className="flex h-[120px] items-center justify-center text-sm text-muted-foreground">
+                  未选择要对比的模型，点击上方选项加入
                 </div>
               )}
             </CardContent>
