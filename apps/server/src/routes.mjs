@@ -21,10 +21,10 @@ import { probeModel } from './prober.mjs';
 import { reloadScheduler, runManualProbe } from './scheduler.mjs';
 
 const RANGE_MS = {
+  '30m': 1_800_000,
   '1h': 3_600_000,
-  '6h': 21_600_000,
+  '8h': 28_800_000,
   '24h': 86_400_000,
-  '7d': 604_800_000,
 };
 
 const DEFAULT_SETTINGS = {

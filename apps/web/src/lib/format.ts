@@ -23,8 +23,8 @@ export function fmtDateTime(iso: string | null | undefined): string {
 
 export function fmtTimeTick(iso: string, range: string): string {
   const d = new Date(iso)
-  if (range === '7d' || range === '24h') return format(d, 'MM-dd HH:mm')
-  return format(d, 'HH:mm:ss')
+  if (range === '8h' || range === '24h') return format(d, 'MM-dd HH:mm')
+  return format(d, 'HH:mm')
 }
 
 export function timeAgo(iso: string | null | undefined): string {

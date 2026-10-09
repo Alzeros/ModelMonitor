@@ -44,10 +44,10 @@ const TOOLTIP_STYLE = {
 
 /** 各时间范围的时间桶粒度（毫秒）：不同模型的探测时刻不同，聚合到同一时间轴折线才能对齐 */
 const BUCKET_MS: Record<RangeKey, number> = {
-  '1h': 2 * 60_000,
-  '6h': 10 * 60_000,
+  '30m': 2 * 60_000,
+  '1h': 5 * 60_000,
+  '8h': 20 * 60_000,
   '24h': 3_600_000,
-  '7d': 6 * 3_600_000,
 }
 
 export function DashboardPage() {
@@ -170,17 +170,17 @@ export function DashboardPage() {
     [load]
   )
 
-  /** 模型对比数据：取各模型最近一次有效探测的输出速度，降序排列 */
+  /** 模型对比数据：取各模型所选时间范围内的平均输出速度，降序排列 */
   const compareData = useMemo(() => {
     const list: { name: string; tps: number; color: string }[] = []
     models.forEach((m, i) => {
-      const l = m.latest
-      if (l && l.status === 'ok' && l.valid === 1 && l.tps != null) {
-        list.push({ name: modelName(m), tps: l.tps, color: colorForIndex(i) })
+      const avg = summaries[m.id]?.stats.tps.avg
+      if (avg != null) {
+        list.push({ name: modelName(m), tps: avg, color: colorForIndex(i) })
       }
     })
     return list.sort((a, b) => b.tps - a.tps)
-  }, [models])
+  }, [models, summaries])
 
   const hasCompare = compareData.length > 0
   const hasOkData = rows.length > 0
@@ -233,7 +233,7 @@ export function DashboardPage() {
           {/* 模型对比：横向条形图，一眼看出谁快谁慢 */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">模型对比 · 最新输出速度（tok/s）</CardTitle>
+              <CardTitle className="text-base">模型对比 · 平均输出速度（tok/s）</CardTitle>
             </CardHeader>
             <CardContent>
               {hasCompare ? (
@@ -254,7 +254,7 @@ export function DashboardPage() {
                     />
                     <Tooltip
                       contentStyle={TOOLTIP_STYLE}
-                      formatter={(v: number) => [`${fmtTps(v)} tok/s`, '输出速度']}
+                      formatter={(v: number) => [`${fmtTps(v)} tok/s`, '平均输出速度']}
                       cursor={{ fill: 'hsl(var(--accent))', opacity: 0.35 }}
                     />
                     <Bar dataKey="tps" radius={[0, 4, 4, 0]} maxBarSize={22}>
