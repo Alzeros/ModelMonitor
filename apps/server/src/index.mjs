@@ -13,7 +13,19 @@ const distDir = path.resolve(__dirname, '../../web/dist');
 const app = Fastify({ logger: false, bodyLimit: 2 * 1024 * 1024 });
 
 if (fs.existsSync(distDir)) {
-  await app.register(fastifyStatic, { root: distDir, wildcard: false });
+  await app.register(fastifyStatic, {
+    root: distDir,
+    wildcard: false,
+    setHeaders: (res, pathname) => {
+      if (pathname.endsWith('.html')) {
+        // HTML 必须每次重验证，避免缓存旧页引用已被新构建替换的资源
+        res.setHeader('Cache-Control', 'no-cache');
+      } else if (/[\\/]assets[\\/]/.test(pathname)) {
+        // 带内容哈希的资源可永久缓存
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      }
+    },
+  });
   app.setNotFoundHandler((req, reply) => {
     if (req.raw.url?.startsWith('/api')) {
       return reply.code(404).send({ error: 'not found' });
