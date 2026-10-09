@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 import {
@@ -10,7 +10,6 @@ import {
   Legend,
   Line,
   LineChart,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
@@ -113,6 +112,28 @@ function persist(key: string, value: unknown): void {
   } catch {
     /* ignore */
   }
+}
+
+/**
+ * 自管容器宽度：替代 recharts ResponsiveContainer（其在 React 19 下会在元素销毁后
+ * 读取 getBoundingClientRect 导致 null 崩溃）。这里只用 ResizeObserver 的
+ * contentRect（元素存续期内回调、卸载即断开），再把数值宽高传给图表。
+ */
+function useElementWidth() {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const [width, setWidth] = useState(0)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    setWidth(el.clientWidth || 600)
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width ?? el.clientWidth
+      if (w > 0) setWidth(Math.round(w))
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  return { ref, width }
 }
 
 type RawProbes = Record<number, ProbeResult[]>
@@ -319,6 +340,10 @@ export function DashboardPage() {
   const toggleTpsHidden = makeToggle(setTpsHidden, 'dashboard.trend.tps.hidden')
   const toggleTtftHidden = makeToggle(setTtftHidden, 'dashboard.trend.ttft.hidden')
 
+  const cmpWrap = useElementWidth()
+  const tpsWrap = useElementWidth()
+  const ttftWrap = useElementWidth()
+
   const changeTpsRange = (v: string) => {
     setTpsRange(v as RangeKey)
     try {
@@ -435,8 +460,15 @@ export function DashboardPage() {
                   暂无有效样本，等待定时探测或手动探测
                 </p>
               ) : null}
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={compareData} layout="vertical" margin={{ top: 4, right: 56, bottom: 0, left: 4 }}>
+              <div ref={cmpWrap.ref} style={{ height: Math.max(200, compareData.length * 34 + 40) }}>
+                {cmpWrap.width > 0 ? (
+                <BarChart
+                  width={cmpWrap.width}
+                  height={Math.max(200, compareData.length * 34 + 40)}
+                  data={compareData}
+                  layout="vertical"
+                  margin={{ top: 4, right: 56, bottom: 0, left: 4 }}
+                >
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" horizontal={false} />
                     <XAxis
                       type="number"
@@ -467,7 +499,8 @@ export function DashboardPage() {
                       />
                     </Bar>
                   </BarChart>
-                </ResponsiveContainer>
+                ) : null}
+              </div>
             </CardContent>
           </Card>
 
@@ -661,8 +694,14 @@ export function DashboardPage() {
                         : '未选择要展示的模型，点击上方选项加入'}
                     </p>
                   ) : null}
-                  <ResponsiveContainer width="100%" height={280}>
-                    <LineChart data={tpsRows} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
+                  <div ref={tpsWrap.ref} style={{ height: 280 }}>
+                  {tpsWrap.width > 0 ? (
+                  <LineChart
+                    width={tpsWrap.width}
+                    height={280}
+                    data={tpsRows}
+                    margin={{ top: 4, right: 12, bottom: 0, left: -10 }}
+                  >
                         <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                         <XAxis
                           dataKey="time"
@@ -692,7 +731,8 @@ export function DashboardPage() {
                           )
                         )}
                       </LineChart>
-                    </ResponsiveContainer>
+                  ) : null}
+                </div>
                 </CardContent>
               </Card>
 
@@ -721,8 +761,14 @@ export function DashboardPage() {
                         : '未选择要展示的模型，点击上方选项加入'}
                     </p>
                   ) : null}
-                  <ResponsiveContainer width="100%" height={280}>
-                    <LineChart data={ttftRows} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
+                  <div ref={ttftWrap.ref} style={{ height: 280 }}>
+                  {ttftWrap.width > 0 ? (
+                  <LineChart
+                    width={ttftWrap.width}
+                    height={280}
+                    data={ttftRows}
+                    margin={{ top: 4, right: 12, bottom: 0, left: -10 }}
+                  >
                         <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                         <XAxis
                           dataKey="time"
@@ -760,7 +806,8 @@ export function DashboardPage() {
                           )
                         )}
                       </LineChart>
-                    </ResponsiveContainer>
+                  ) : null}
+                </div>
                 </CardContent>
               </Card>
             </div>
