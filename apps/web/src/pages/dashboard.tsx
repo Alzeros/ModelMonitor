@@ -15,7 +15,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { Loader2, PauseCircle, Play, Plus, RefreshCw, Timer } from 'lucide-react'
+import { ChevronDown, Loader2, PauseCircle, Play, Plus, RefreshCw, Timer } from 'lucide-react'
 import { api } from '@/lib/api'
 import { colorForIndex, fmtMs, fmtTps, fmtTimeTick, timeAgo } from '@/lib/format'
 import {
@@ -31,6 +31,11 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
@@ -63,6 +68,13 @@ const RANGE_STORAGE_KEY = 'dashboard.range'
 
 /** 对比图隐藏的模型（未勾选）：存 id 列表，新增模型默认显示 */
 const HIDDEN_STORAGE_KEY = 'dashboard.compare.hidden'
+
+/** 收起的供应商分组：存 provider_id 列表，默认全部展开 */
+const COLLAPSED_STORAGE_KEY = 'dashboard.groups.collapsed'
+
+function loadCollapsedGroups(): Set<number> {
+  return loadHiddenIds(COLLAPSED_STORAGE_KEY)
+}
 
 function loadRange(): RangeKey {
   try {
@@ -204,6 +216,7 @@ export function DashboardPage() {
   const [ttftRange, setTtftRange] = useState<RangeKey>(() => loadTrendRange('dashboard.trend.ttft.range'))
   const [tpsHidden, setTpsHidden] = useState<Set<number>>(() => loadHiddenIds('dashboard.trend.tps.hidden'))
   const [ttftHidden, setTtftHidden] = useState<Set<number>>(() => loadHiddenIds('dashboard.trend.ttft.hidden'))
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<number>>(loadCollapsedGroups)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [probing, setProbing] = useState<Set<number>>(new Set())
@@ -322,6 +335,30 @@ export function DashboardPage() {
     }
   }
 
+  /** 供应商分组（models 已按 provider/模型 id 排序，按序分组） */
+  const providerGroups = useMemo(() => {
+    const map = new Map<number, { id: number; name: string; enabled: number; items: ModelWithLatest[] }>()
+    for (const m of models) {
+      let g = map.get(m.provider_id)
+      if (!g) {
+        g = { id: m.provider_id, name: m.provider_name, enabled: m.provider_enabled, items: [] }
+        map.set(m.provider_id, g)
+      }
+      g.items.push(m)
+    }
+    return [...map.values()]
+  }, [models])
+
+  const toggleGroup = (pid: number, open: boolean) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev)
+      if (open) next.delete(pid)
+      else next.add(pid)
+      persist(COLLAPSED_STORAGE_KEY, [...next])
+      return next
+    })
+  }
+
   const hasCompare = compareData.length > 0
   const hasOkData = useMemo(() => Object.values(rawProbes).some((arr) => arr.length > 0), [rawProbes])
   const tpsRows = useMemo(() => buildTrendRows(rawProbes, 'tps', tpsRange), [rawProbes, tpsRange])
@@ -435,9 +472,51 @@ export function DashboardPage() {
             </CardContent>
           </Card>
 
-          {/* 卡片墙（紧凑） */}
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-            {models.map((m) => {
+          {/* 卡片墙：按供应商分组，点击组头折叠/展开 */}
+          <div className="space-y-3">
+            {providerGroups.map((g) => {
+              const open = !collapsedGroups.has(g.id)
+              const okCount = g.items.filter((m) => (m.latest ?? summaries[m.id]?.latest)?.status === 'ok').length
+              const errCount = g.items.filter((m) => (m.latest ?? summaries[m.id]?.latest)?.status === 'error').length
+              return (
+                <Collapsible key={g.id} open={open} onOpenChange={(v) => toggleGroup(g.id, v)}>
+                  <Card className="gap-3 py-4">
+                    <CollapsibleTrigger asChild>
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-2 px-4 py-1 text-left hover:bg-accent/40"
+                        aria-expanded={open}
+                      >
+                        <ChevronDown
+                          className={cn('size-4 shrink-0 text-muted-foreground transition-transform', !open && '-rotate-90')}
+                        />
+                        <span className="truncate text-sm font-semibold">{g.name}</span>
+                        {!g.enabled ? (
+                          <Badge variant="secondary" className="shrink-0">
+                            <PauseCircle className="size-3" />
+                            供应商停用
+                          </Badge>
+                        ) : null}
+                        <span className="shrink-0 text-xs text-muted-foreground">{g.items.length} 个模型</span>
+                        <span className="ml-auto flex shrink-0 items-center gap-2 text-xs tabular-nums text-muted-foreground">
+                          {okCount > 0 ? (
+                            <span className="flex items-center gap-1">
+                              <span className="size-2 rounded-full bg-emerald-500" />
+                              {okCount}
+                            </span>
+                          ) : null}
+                          {errCount > 0 ? (
+                            <span className="flex items-center gap-1">
+                              <span className="size-2 rounded-full bg-red-500" />
+                              {errCount}
+                            </span>
+                          ) : null}
+                        </span>
+                      </button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <CardContent className="grid gap-4 px-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+            {g.items.map((m) => {
               const latest = m.latest ?? summaries[m.id]?.latest ?? null
               const stats = summaries[m.id]?.stats
               const isProbing = probing.has(m.id)
@@ -551,6 +630,12 @@ export function DashboardPage() {
                     </div>
                   </CardContent>
                 </Card>
+              )
+            })}
+                      </CardContent>
+                    </CollapsibleContent>
+                  </Card>
+                </Collapsible>
               )
             })}
           </div>
