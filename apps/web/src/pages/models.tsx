@@ -467,9 +467,15 @@ export function ModelsPage() {
                             <TableCell className="font-mono text-sm">{m.model}</TableCell>
                             <TableCell>
                               {m.latest?.status === 'ok' ? (
-                                <span className="font-medium tabular-nums">
-                                  {fmtTps(m.latest.tps)}
-                                </span>
+                                m.latest.valid === 0 ? (
+                                  <Badge variant="outline" className="border-amber-500/50 text-amber-600 dark:text-amber-400" title="测量异常，已排除出统计">
+                                    异常
+                                  </Badge>
+                                ) : (
+                                  <span className="font-medium tabular-nums">
+                                    {fmtTps(m.latest.tps)}
+                                  </span>
+                                )
                               ) : m.latest?.status === 'error' ? (
                                 <Badge variant="destructive" title={m.latest.error_message ?? ''}>
                                   {ERROR_TYPE_LABELS[m.latest.error_type ?? ''] ?? '失败'}

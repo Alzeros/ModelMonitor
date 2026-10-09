@@ -211,15 +211,23 @@ export function DashboardPage() {
                     latest.status === 'ok' ? (
                       <div>
                         <div className="flex items-baseline gap-1.5">
-                          <span className="text-3xl font-semibold tabular-nums">
-                            {fmtTps(latest.tps)}
-                          </span>
-                          <span className="text-sm text-muted-foreground">输出 tok/s</span>
-                          {latest.estimated === 1 ? (
-                            <Badge variant="secondary" className="text-[10px]">
-                              估算
+                          {latest.valid === 0 ? (
+                            <Badge variant="outline" className="border-amber-500/50 text-amber-600 dark:text-amber-400">
+                              测量异常
                             </Badge>
-                          ) : null}
+                          ) : (
+                            <>
+                              <span className="text-3xl font-semibold tabular-nums">
+                                {fmtTps(latest.tps)}
+                              </span>
+                              <span className="text-sm text-muted-foreground">输出 tok/s</span>
+                              {latest.estimated === 1 ? (
+                                <Badge variant="secondary" className="text-[10px]">
+                                  估算
+                                </Badge>
+                              ) : null}
+                            </>
+                          )}
                         </div>
                         <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                           <span className="flex items-center gap-1">

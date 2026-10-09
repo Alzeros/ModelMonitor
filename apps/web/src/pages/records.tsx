@@ -34,12 +34,14 @@ const PAGE_SIZE = 20
 
 type StatusFilter = 'all' | 'ok' | 'error'
 type RangeFilter = 'all' | RangeKey
+type QualityFilter = 'normal' | 'all' | 'invalid'
 
 export function RecordsPage() {
   const [models, setModels] = useState<ModelRow[]>([])
   const [modelId, setModelId] = useState<string>('all')
   const [status, setStatus] = useState<StatusFilter>('all')
   const [range, setRange] = useState<RangeFilter>('all')
+  const [quality, setQuality] = useState<QualityFilter>('normal')
   const [page, setPage] = useState(0)
   const [data, setData] = useState<ProbesResponse>({ total: 0, items: [] })
   const [loading, setLoading] = useState(true)
@@ -57,6 +59,7 @@ export function RecordsPage() {
       const res = await api.listProbes({
         model_id: modelId === 'all' ? null : Number(modelId),
         status: status === 'all' ? '' : status,
+        valid: quality === 'normal' ? 1 : quality === 'invalid' ? 0 : undefined,
         range: range === 'all' ? '' : range,
         limit: PAGE_SIZE,
         offset: page * PAGE_SIZE,
@@ -67,7 +70,7 @@ export function RecordsPage() {
     } finally {
       setLoading(false)
     }
-  }, [modelId, status, range, page])
+  }, [modelId, status, range, quality, page])
 
   useEffect(() => {
     void load()
@@ -133,6 +136,17 @@ export function RecordsPage() {
               </SelectContent>
             </Select>
 
+            <Select value={quality} onValueChange={(v) => changeFilter(() => setQuality(v as QualityFilter))}>
+              <SelectTrigger className="w-[120px]">
+                <SelectValue placeholder="数据质量" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="normal">仅正常</SelectItem>
+                <SelectItem value="all">全部</SelectItem>
+                <SelectItem value="invalid">仅异常</SelectItem>
+              </SelectContent>
+            </Select>
+
             <Button
               variant="outline"
               size="icon"
@@ -189,9 +203,15 @@ export function RecordsPage() {
                     </TableCell>
                     <TableCell>
                       {p.status === 'ok' ? (
-                        <Badge variant="outline" className="border-emerald-500/50 text-emerald-600 dark:text-emerald-400">
-                          成功
-                        </Badge>
+                        p.valid === 0 ? (
+                          <Badge variant="outline" className="border-amber-500/50 text-amber-600 dark:text-amber-400" title="测量异常（输出阶段过短或 tps 超限），已排除出统计">
+                            异常
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="border-emerald-500/50 text-emerald-600 dark:text-emerald-400">
+                            成功
+                          </Badge>
+                        )
                       ) : (
                         <Badge variant="destructive">
                           {ERROR_TYPE_LABELS[p.error_type ?? ''] ?? '失败'}

@@ -27,6 +27,7 @@ function round2(n) {
 function fail(type, message) {
   return {
     status: 'error',
+    valid: 0,
     ttft_ms: null,
     total_ms: null,
     completion_tokens: null,
@@ -177,7 +178,17 @@ async function runProbe(model) {
     const reasoningTps = reasoningTokens > 0 && reasoningDurMs > 0 ? round2(reasoningTokens / (reasoningDurMs / 1000)) : null;
     const avgTps = completionTokens > 0 ? round2(completionTokens / (totalMs / 1000)) : null;
 
+    // 有效性判定：输出阶段过短(<100ms)或 tps 超出物理上限(>5000)视为异常——tps 置空、valid=0
+    const isValid =
+      firstContentTs !== null &&
+      contentDurMs >= 100 &&
+      outputTps != null &&
+      Number.isFinite(outputTps) &&
+      outputTps <= 5000;
+    const valid = isValid ? 1 : 0;
+
     const base = {
+      valid,
       ttft_ms: ttftMs,
       total_ms: totalMs,
       completion_tokens: completionTokens,
@@ -195,6 +206,7 @@ async function runProbe(model) {
       return {
         status: 'error',
         ...base,
+        valid: 0,
         tps: null,
         avg_tps: avgTps,
         error_type: 'no_content',
@@ -204,7 +216,7 @@ async function runProbe(model) {
       };
     }
 
-    return { status: 'ok', ...base, tps: outputTps, avg_tps: avgTps, error_type: null, error_message: null };
+    return { status: 'ok', ...base, tps: isValid ? outputTps : null, avg_tps: avgTps, error_type: null, error_message: null };
   } catch (err) {
     if (timedOut || err?.name === 'AbortError' || err?.name === 'TimeoutError') {
       return fail('timeout', `请求超时（${timeoutMs}ms）`);

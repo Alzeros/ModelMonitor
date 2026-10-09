@@ -57,6 +57,7 @@ export interface ProbeResult {
   id?: number
   model_id: number | null
   status: 'ok' | 'error'
+  valid: 0 | 1
   ttft_ms: number | null
   total_ms: number | null
   completion_tokens: number | null
@@ -109,6 +110,7 @@ export interface ModelsResponse {
 export interface ListProbesParams {
   model_id?: number | null
   status?: 'ok' | 'error' | ''
+  valid?: 1 | 0
   range?: RangeKey | ''
   limit?: number
   offset?: number

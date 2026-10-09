@@ -106,6 +106,7 @@ function migrate() {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         model_id INTEGER NOT NULL REFERENCES models(id) ON DELETE CASCADE,
         status TEXT NOT NULL,
+        valid INTEGER NOT NULL DEFAULT 1,
         ttft_ms INTEGER,
         total_ms INTEGER,
         completion_tokens INTEGER,
@@ -150,6 +151,12 @@ migrate();
   }
   const rcols = db.prepare('PRAGMA table_info(probe_results)').all().map((c) => c.name);
   if (rcols.length) {
+    if (!rcols.includes('valid')) {
+      db.exec('ALTER TABLE probe_results ADD COLUMN valid INTEGER NOT NULL DEFAULT 1');
+      // 回填历史异常：错误记录、以及 tps 缺失或超出物理上限(>5000)的成功记录标记为无效并清空 tps
+      db.exec("UPDATE probe_results SET valid=0 WHERE status='error'");
+      db.exec("UPDATE probe_results SET valid=0, tps=NULL WHERE status='ok' AND (tps IS NULL OR tps > 5000)");
+    }
     for (const [col, def] of [
       ['reasoning_tokens', 'INTEGER'],
       ['reasoning_ms', 'INTEGER'],
@@ -269,8 +276,8 @@ export function insertProbeResult(r) {
   const created_at = new Date().toISOString();
   const info = db
     .prepare(
-      `INSERT INTO probe_results (model_id, status, ttft_ms, total_ms, completion_tokens, estimated, tps, avg_tps, reasoning_tokens, reasoning_ms, reasoning_tps, content_tokens, prompt_tokens, error_type, error_message, created_at)
-       VALUES (@model_id, @status, @ttft_ms, @total_ms, @completion_tokens, @estimated, @tps, @avg_tps, @reasoning_tokens, @reasoning_ms, @reasoning_tps, @content_tokens, @prompt_tokens, @error_type, @error_message, @created_at)`
+      `INSERT INTO probe_results (model_id, status, valid, ttft_ms, total_ms, completion_tokens, estimated, tps, avg_tps, reasoning_tokens, reasoning_ms, reasoning_tps, content_tokens, prompt_tokens, error_type, error_message, created_at)
+       VALUES (@model_id, @status, @valid, @ttft_ms, @total_ms, @completion_tokens, @estimated, @tps, @avg_tps, @reasoning_tokens, @reasoning_ms, @reasoning_tps, @content_tokens, @prompt_tokens, @error_type, @error_message, @created_at)`
     )
     .run({ ...r, created_at });
   return { id: info.lastInsertRowid, created_at };
@@ -282,7 +289,7 @@ export function latestProbe(modelId) {
     .get(modelId);
 }
 
-export function listProbes({ modelId, status, since, limit = 100, offset = 0, order = 'desc' }) {
+export function listProbes({ modelId, status, valid, since, limit = 100, offset = 0, order = 'desc' }) {
   const where = [];
   const params = { limit, offset };
   if (modelId != null) {
@@ -292,6 +299,10 @@ export function listProbes({ modelId, status, since, limit = 100, offset = 0, or
   if (status) {
     where.push('status = @status');
     params.status = status;
+  }
+  if (valid === 1 || valid === 0) {
+    where.push('valid = @valid');
+    params.valid = valid;
   }
   if (since) {
     where.push('created_at >= @since');

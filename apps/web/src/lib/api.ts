@@ -74,6 +74,7 @@ export const api = {
     const qs = new URLSearchParams()
     if (params.model_id != null) qs.set('model_id', String(params.model_id))
     if (params.status) qs.set('status', params.status)
+    if (params.valid != null) qs.set('valid', String(params.valid))
     if (params.range) qs.set('range', params.range)
     if (params.limit != null) qs.set('limit', String(params.limit))
     if (params.offset != null) qs.set('offset', String(params.offset))

@@ -305,6 +305,7 @@ export async function registerRoutes(app) {
     return listProbes({
       modelId: q.model_id != null && q.model_id !== '' ? Number(q.model_id) : null,
       status: q.status === 'ok' || q.status === 'error' ? q.status : undefined,
+      valid: q.valid === '1' ? 1 : q.valid === '0' ? 0 : undefined,
       since,
       limit,
       offset,
