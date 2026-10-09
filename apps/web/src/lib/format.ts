@@ -11,6 +11,17 @@ export function fmtMs(ms: number | null | undefined): string {
   return `${(ms / 1000).toFixed(2)} s`
 }
 
+/** 测量异常（valid=0）的悬停说明：按成因区分 */
+export function invalidTpsTitle(totalMs: number | null | undefined, ttftMs: number | null | undefined): string {
+  if (totalMs != null && ttftMs != null) {
+    const dur = totalMs - ttftMs
+    if (dur < 100) {
+      return `输出阶段仅 ${dur}ms —— 网关疑似整包缓冲/缓存回放（非真实流式转发），测速无意义，已排除出统计`
+    }
+  }
+  return '测得速度超出物理上限（网关疑汇总/缓存数据），已排除出统计'
+}
+
 export function fmtTokens(n: number | null | undefined): string {
   if (n == null) return '—'
   return String(n)

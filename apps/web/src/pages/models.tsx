@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { Check, ListPlus, Loader2, Pencil, Play, Plus, Trash2 } from 'lucide-react'
 import { api } from '@/lib/api'
-import { fmtMs, fmtTps, timeAgo } from '@/lib/format'
+import { fmtMs, fmtTps, invalidTpsTitle, timeAgo } from '@/lib/format'
 import {
   ERROR_TYPE_LABELS,
   modelName,
@@ -532,7 +532,7 @@ export function ModelsPage() {
                             <TableCell>
                               {m.latest?.status === 'ok' ? (
                                 m.latest.valid === 0 ? (
-                                  <Badge variant="outline" className="border-amber-500/50 text-amber-600 dark:text-amber-400" title="测量异常，已排除出统计">
+                                  <Badge variant="outline" className="border-amber-500/50 text-amber-600 dark:text-amber-400" title={invalidTpsTitle(m.latest.total_ms, m.latest.ttft_ms)}>
                                     异常
                                   </Badge>
                                 ) : (

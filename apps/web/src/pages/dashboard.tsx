@@ -17,7 +17,7 @@ import {
 } from 'recharts'
 import { ChevronDown, Loader2, PauseCircle, Play, Plus, RefreshCw, Timer } from 'lucide-react'
 import { api } from '@/lib/api'
-import { colorForIndex, fmtMs, fmtTps, fmtTimeTick, timeAgo } from '@/lib/format'
+import { colorForIndex, fmtMs, fmtTps, fmtTimeTick, invalidTpsTitle, timeAgo } from '@/lib/format'
 import {
   ERROR_TYPE_LABELS,
   RANGE_MS,
@@ -554,7 +554,7 @@ export function DashboardPage() {
                               <Badge
                                 variant="outline"
                                 className="border-amber-500/50 text-amber-600 dark:text-amber-400"
-                                title="测量异常（输出阶段过短或 tps 超限），已排除出统计"
+                                title={invalidTpsTitle(latest.total_ms, latest.ttft_ms)}
                               >
                                 测量异常
                               </Badge>

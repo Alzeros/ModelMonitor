@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
 import { api } from '@/lib/api'
-import { fmtDateTime, fmtMs, fmtTps } from '@/lib/format'
+import { fmtDateTime, fmtMs, fmtTps, invalidTpsTitle } from '@/lib/format'
 import {
   ERROR_TYPE_LABELS,
   RANGE_OPTIONS,
@@ -210,7 +210,7 @@ export function RecordsPage() {
                     <TableCell>
                       {p.status === 'ok' ? (
                         p.valid === 0 ? (
-                          <Badge variant="outline" className="border-amber-500/50 text-amber-600 dark:text-amber-400" title="测量异常（输出阶段过短或 tps 超限），已排除出统计">
+                          <Badge variant="outline" className="border-amber-500/50 text-amber-600 dark:text-amber-400" title={invalidTpsTitle(p.total_ms, p.ttft_ms)}>
                             异常
                           </Badge>
                         ) : (
