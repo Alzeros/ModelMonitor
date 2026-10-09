@@ -226,7 +226,9 @@ export function DashboardPage() {
       if (!silent) setRefreshing(true)
       try {
         const { items } = await api.listModels()
-        setModels(items)
+        // 已停用的供应商整体不进入仪表盘（分组/对比/趋势/请求都基于此过滤）
+        const active = items.filter((m) => m.provider_enabled === 1)
+        setModels(active)
         const ids = items.map((m) => m.id)
         if (!ids.length) {
           setSummaries({})
@@ -409,7 +411,9 @@ export function DashboardPage() {
       ) : models.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
-            <p className="text-sm text-muted-foreground">还没有添加供应商和模型</p>
+            <p className="text-sm text-muted-foreground">
+              暂无启用中的供应商和模型（可在「模型管理」页添加或启用）
+            </p>
             <Button asChild>
               <Link to="/models">
                 <Plus className="size-4" /> 去添加模型
@@ -491,12 +495,6 @@ export function DashboardPage() {
                           className={cn('size-4 shrink-0 text-muted-foreground transition-transform', !open && '-rotate-90')}
                         />
                         <span className="truncate text-sm font-semibold">{g.name}</span>
-                        {!g.enabled ? (
-                          <Badge variant="secondary" className="shrink-0">
-                            <PauseCircle className="size-3" />
-                            供应商停用
-                          </Badge>
-                        ) : null}
                         <span className="shrink-0 text-xs text-muted-foreground">{g.items.length} 个模型</span>
                         <span className="ml-auto flex shrink-0 items-center gap-2 text-xs tabular-nums text-muted-foreground">
                           {okCount > 0 ? (
