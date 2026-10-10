@@ -116,23 +116,33 @@ function persist(key: string, value: unknown): void {
 
 /**
  * 自管容器宽度：替代 recharts ResponsiveContainer（其在 React 19 下会在元素销毁后
- * 读取 getBoundingClientRect 导致 null 崩溃）。这里只用 ResizeObserver 的
- * contentRect（元素存续期内回调、卸载即断开），再把数值宽高传给图表。
+ * 读取 getBoundingClientRect 导致 null 崩溃）。callback ref 在元素挂载时 attach、
+ * 卸载时断开，读取 clientWidth / contentRect（都不调 getBoundingClientRect）。
  */
 function useElementWidth() {
-  const ref = useRef<HTMLDivElement | null>(null)
   const [width, setWidth] = useState(0)
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    setWidth(el.clientWidth || 600)
-    const ro = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect.width ?? el.clientWidth
-      if (w > 0) setWidth(Math.round(w))
-    })
-    ro.observe(el)
-    return () => ro.disconnect()
+  const roRef = useRef<ResizeObserver | null>(null)
+  const cleanup = useCallback(() => {
+    roRef.current?.disconnect()
+    roRef.current = null
   }, [])
+  const ref = useCallback(
+    (el: HTMLDivElement | null) => {
+      if (!el) {
+        cleanup()
+        return
+      }
+      setWidth(el.clientWidth || 600)
+      cleanup()
+      const ro = new ResizeObserver((entries) => {
+        const w = Math.round(entries[0]?.contentRect.width ?? 0)
+        if (w > 0) setWidth(w)
+      })
+      ro.observe(el)
+      roRef.current = ro
+    },
+    [cleanup]
+  )
   return { ref, width }
 }
 
