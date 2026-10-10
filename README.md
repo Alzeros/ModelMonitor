@@ -18,7 +18,7 @@
 ```bash
 npm install        # 根目录安装全部工作区依赖
 
-npm run dev        # 开发模式：Fastify(3000) + Vite(5173，/api 已代理)
+npm run dev        # 开发模式：Fastify(3000) + Vite(22555，/api 已代理)，访问 http://127.0.0.1:22555
 
 npm run build      # 构建前端到 apps/web/dist
 npm start          # 生产模式：单进程托管前端 + API + 定时探测，访问 http://127.0.0.1:3000
