@@ -58,6 +58,12 @@ module.exports = {
       },
       boxShadow: {
         xs: "0 1px 2px 0 rgb(0 0 0 / 0.05)",
+        glow: "0 0 0 1px hsl(var(--primary) / 0.25), 0 0 18px -4px hsl(var(--primary) / 0.35)",
+        "glow-lg": "0 0 0 1px hsl(var(--primary) / 0.4), 0 0 32px -6px hsl(var(--primary) / 0.5)",
+      },
+      fontFamily: {
+        sans: ["Inter", "'Fira Sans'", "ui-sans-serif", "system-ui", "sans-serif"],
+        mono: ["'Fira Code'", "ui-monospace", "SFMono-Regular", "monospace"],
       },
       keyframes: {
         "accordion-down": {
@@ -72,11 +78,16 @@ module.exports = {
           "0%,70%,100%": { opacity: "1" },
           "20%,50%": { opacity: "0" },
         },
+        "status-breath": {
+          "0%,100%": { opacity: "1" },
+          "50%": { opacity: "0.45" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
         "caret-blink": "caret-blink 1.25s ease-out infinite",
+        "status-breath": "status-breath 2.6s ease-in-out infinite",
       },
     },
   },

@@ -88,7 +88,7 @@ export function RecordsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">探测记录</h1>
+        <h1 className="text-tech-gradient text-xl font-bold tracking-tight">探测记录</h1>
         <p className="text-sm text-muted-foreground">所有探测的原始明细数据</p>
       </div>
 

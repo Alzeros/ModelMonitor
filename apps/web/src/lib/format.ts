@@ -51,7 +51,8 @@ export function timeAgo(iso: string | null | undefined): string {
   return `${days} 天前`
 }
 
-export const CHART_COLORS = ['#2563eb', '#16a34a', '#dc2626', '#9333ea', '#ea580c', '#0891b2', '#ca8a04', '#db2777']
+/** 霓虹科技系图表配色（按序循环） */
+export const CHART_COLORS = ['#22d3ee', '#a78bfa', '#34d399', '#f472b6', '#fbbf24', '#60a5fa', '#f87171', '#4ade80']
 
 export function colorForIndex(i: number): string {
   return CHART_COLORS[i % CHART_COLORS.length]

@@ -18,6 +18,7 @@ function ThemeToggle() {
       variant="ghost"
       size="icon"
       aria-label="切换主题"
+      className="cursor-pointer text-muted-foreground transition-colors hover:text-primary"
       onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
     >
       {resolvedTheme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
@@ -28,11 +29,15 @@ function ThemeToggle() {
 export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-svh bg-background">
-      <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur">
+      <header className="panel-glass sticky top-0 z-40 border-b border-border/60">
+        {/* 顶栏扫描线：青→紫渐变 */}
+        <div className="scanline absolute inset-x-0 top-0" aria-hidden />
         <div className="mx-auto flex h-14 max-w-7xl items-center gap-6 px-4">
-          <div className="flex items-center gap-2 font-semibold tracking-tight">
-            <Activity className="size-5 text-primary" />
-            <span>ModelMonitor</span>
+          <div className="flex items-center gap-2.5">
+            <span className="relative grid size-7 place-items-center rounded-md border border-primary/30 bg-primary/10 shadow-glow">
+              <Activity className="size-4 text-primary" />
+            </span>
+            <span className="text-tech-gradient text-[15px] font-bold tracking-tight">ModelMonitor</span>
           </div>
           <nav className="flex items-center gap-1">
             {NAV.map(({ to, label, icon: Icon, end }) => (
@@ -42,8 +47,9 @@ export function AppShell({ children }: { children: ReactNode }) {
                 end={end}
                 className={({ isActive }) =>
                   cn(
-                    'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground',
-                    isActive && 'bg-accent font-medium text-accent-foreground'
+                    'flex cursor-pointer items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors duration-200 hover:bg-accent/70 hover:text-foreground',
+                    isActive &&
+                      'bg-primary/10 font-medium text-primary shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.25)]'
                   )
                 }
               >

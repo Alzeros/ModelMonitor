@@ -395,7 +395,7 @@ export function DashboardPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">仪表盘</h1>
+          <h1 className="text-tech-gradient text-xl font-bold tracking-tight">仪表盘</h1>
           <p className="text-sm text-muted-foreground">模型输出效率总览，每 30 秒自动刷新</p>
         </div>
         <div className="flex items-center gap-2">
@@ -527,13 +527,13 @@ export function DashboardPage() {
                         <span className="ml-auto flex shrink-0 items-center gap-2 text-xs tabular-nums text-muted-foreground">
                           {okCount > 0 ? (
                             <span className="flex items-center gap-1">
-                              <span className="size-2 rounded-full bg-emerald-500" />
+                              <span className="dot-glow size-2 rounded-full bg-emerald-500 text-emerald-500" />
                               {okCount}
                             </span>
                           ) : null}
                           {errCount > 0 ? (
                             <span className="flex items-center gap-1">
-                              <span className="size-2 rounded-full bg-red-500" />
+                              <span className="dot-glow size-2 rounded-full bg-red-500 text-red-500" />
                               {errCount}
                             </span>
                           ) : null}
@@ -552,10 +552,10 @@ export function DashboardPage() {
                     <div className="flex min-w-0 items-center gap-2">
                       <span
                         className={cn(
-                          'size-2 shrink-0 rounded-full',
-                          latest?.status === 'ok' && 'bg-emerald-500',
-                          latest?.status === 'error' && 'bg-red-500',
-                          !latest && 'bg-muted-foreground/40'
+                          'dot-glow size-2 shrink-0 rounded-full animate-status-breath',
+                          latest?.status === 'ok' && 'bg-emerald-500 text-emerald-500',
+                          latest?.status === 'error' && 'bg-red-500 text-red-500',
+                          !latest && 'bg-muted-foreground/40 text-muted-foreground'
                         )}
                       />
                       <CardTitle
@@ -588,7 +588,7 @@ export function DashboardPage() {
                               </Badge>
                             ) : (
                               <>
-                                <span className="text-2xl font-semibold tabular-nums">
+                                <span className="text-glow font-mono text-2xl font-semibold tabular-nums">
                                   {fmtTps(latest.tps)}
                                 </span>
                                 <span className="text-xs text-muted-foreground">输出 tok/s</span>
