@@ -1,5 +1,5 @@
 import { HashRouter, Route, Routes } from 'react-router-dom'
-import { ThemeProvider } from 'next-themes'
+import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from '@/components/ui/sonner'
 import { AppShell } from '@/components/app-shell'
 import { DashboardPage } from '@/pages/dashboard'
@@ -8,7 +8,8 @@ import { RecordsPage } from '@/pages/records'
 
 export default function App() {
   return (
-    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
+    // 默认 dark，支持 light / dark / system；默认 disableTransitionOnChange
+    <ThemeProvider>
       <HashRouter>
         <AppShell>
           <Routes>

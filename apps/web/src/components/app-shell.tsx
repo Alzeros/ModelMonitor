@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { NavLink } from 'react-router-dom'
-import { useTheme } from 'next-themes'
+import { useTheme } from '@/components/theme-provider'
 import { Activity, Boxes, Moon, ScrollText, Sun } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'

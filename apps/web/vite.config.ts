@@ -12,8 +12,11 @@ export default defineConfig({
     },
   },
   server: {
+    // 固定 dev 端口：5173/5174 常被其它项目占用，改为专用 22555
+    port: 22555,
+    strictPort: true,
     proxy: {
-      "/api": "http://127.0.0.1:3000",
+      "/api": `http://127.0.0.1:${process.env.API_PORT || 3000}`,
     },
   },
 });

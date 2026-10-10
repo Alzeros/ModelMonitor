@@ -4,6 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ModelMonitor</title>
+    <script>
+      // 主题防闪烁：先于 React 挂载设置 html 的 .light/.dark（与 theme-provider.tsx 同一套规则）
+      ;(function () {
+        var t = 'dark'
+        try {
+          t = localStorage.getItem('theme') || t
+        } catch (e) {}
+        if (t === 'system') t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+        var c = document.documentElement.classList
+        c.toggle('dark', t === 'dark')
+        c.toggle('light', t !== 'dark')
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

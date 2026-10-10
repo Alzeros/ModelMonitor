@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type 
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 import {
+  Area,
+  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
@@ -14,9 +16,20 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { ChevronDown, Loader2, Play, Plus, RefreshCw, Timer } from 'lucide-react'
+import {
+  ArrowRight,
+  ChevronDown,
+  CircleCheck,
+  CircleX,
+  Layers,
+  Loader2,
+  Play,
+  Plus,
+  RefreshCw,
+  Timer,
+} from 'lucide-react'
 import { api } from '@/lib/api'
-import { colorForIndex, fmtMs, fmtTps, fmtTimeTick, invalidTpsTitle, timeAgo } from '@/lib/format'
+import { CHART_COLORS, colorForIndex, fmtMs, fmtTps, fmtTimeTick, invalidTpsTitle, timeAgo } from '@/lib/format'
 import {
   ERROR_TYPE_LABELS,
   RANGE_MS,
@@ -236,6 +249,352 @@ function makeToggle(
   }
 }
 
+// ---------- 概览区：统计卡 / 模型状态分布 / 延迟概览 / 最近探测记录 ----------
+
+/** 区间总耗时聚合：P50 / P95 / 平均（仅统计测量有效样本） */
+function latencyAggregates(
+  probes: RawProbes,
+  rk: RangeKey
+): { p50: number | null; p95: number | null; avg: number | null } {
+  const since = Date.now() - RANGE_MS[rk]
+  const vals: number[] = []
+  for (const arr of Object.values(probes)) {
+    for (const p of arr) {
+      if (p.valid === 0 || p.total_ms == null) continue
+      if (new Date(p.created_at).getTime() < since) continue
+      vals.push(p.total_ms)
+    }
+  }
+  if (!vals.length) return { p50: null, p95: null, avg: null }
+  vals.sort((a, b) => a - b)
+  const pick = (f: number): number =>
+    vals[Math.min(vals.length - 1, Math.max(0, Math.ceil(f * vals.length) - 1))]
+  return {
+    p50: pick(0.5),
+    p95: pick(0.95),
+    avg: Math.round(vals.reduce((s, v) => s + v, 0) / vals.length),
+  }
+}
+
+/** 延迟概览折线数据：所有启用模型的总耗时按时间桶取平均，与趋势图同口径对齐 */
+function buildLatencyRows(probes: RawProbes, rk: RangeKey): Row[] {
+  const bucketMs = BUCKET_MS[rk]
+  const since = Date.now() - RANGE_MS[rk]
+  type Acc = { t: number; sum: number; c: number }
+  const acc = new Map<number, Acc>()
+  for (const arr of Object.values(probes)) {
+    for (const p of arr) {
+      if (p.valid === 0 || p.total_ms == null) continue
+      const t0 = new Date(p.created_at).getTime()
+      if (t0 < since) continue
+      const t = Math.floor(t0 / bucketMs) * bucketMs
+      const row = acc.get(t) ?? { t, sum: 0, c: 0 }
+      row.sum += p.total_ms
+      row.c += 1
+      acc.set(t, row)
+    }
+  }
+  return [...acc.values()]
+    .sort((a, b) => a.t - b.t)
+    .map((r) => ({ time: new Date(r.t).toISOString(), ms: Math.round(r.sum / r.c) }))
+}
+
+/** 顶部统计卡：总计 / 在线 / 离线（仅统计启用模型，口径与下方区块一致） */
+function StatCards({ total, online, offline }: { total: number; online: number; offline: number }) {
+  const items = [
+    { label: '总计模型', value: total, icon: Layers, tone: 'text-primary', sub: '启用中的模型' },
+    { label: '在线模型', value: online, icon: CircleCheck, tone: 'text-emerald-500', sub: '最近一次探测成功' },
+    { label: '离线模型', value: offline, icon: CircleX, tone: 'text-red-500', sub: '探测失败或未探测' },
+  ] as const
+  return (
+    <div className="grid gap-4 sm:grid-cols-3">
+      {items.map((it) => (
+        <Card key={it.label} className="py-4">
+          <CardContent className="flex items-center gap-3 px-4">
+            <span
+              className={cn('flex size-10 shrink-0 items-center justify-center rounded-lg bg-accent/60', it.tone)}
+            >
+              <it.icon className="size-5" />
+            </span>
+            <div className="min-w-0">
+              <p className="text-xs text-muted-foreground">{it.label}</p>
+              <p className="text-glow font-mono text-2xl font-semibold leading-tight tabular-nums">{it.value}</p>
+              <p className="truncate text-[11px] text-muted-foreground/70">{it.sub}</p>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  )
+}
+
+/** 模型状态分布 · 按供应商：每行一根在线/离线堆叠条（置顶概览） */
+function StatusDistributionPanel({
+  stats,
+}: {
+  stats: { id: number; name: string; total: number; ok: number; err: number; unknown: number }[]
+}) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+        <div>
+          <CardTitle className="text-base">模型状态分布</CardTitle>
+          <p className="text-xs text-muted-foreground">按供应商统计启用中的模型</p>
+        </div>
+        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1">
+            <span className="size-2 rounded-full bg-emerald-500" />
+            在线
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="size-2 rounded-full bg-red-500" />
+            离线
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="size-2 rounded-full bg-muted-foreground/40" />
+            未探测
+          </span>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {stats.map((s) => (
+          <div key={s.id} className="flex items-center gap-3">
+            <span className="w-28 shrink-0 truncate text-sm" title={s.name}>
+              {s.name}
+            </span>
+            <div className="flex h-2.5 min-w-0 flex-1 items-center overflow-hidden rounded-full bg-muted">
+              {(['ok', 'err', 'unknown'] as const).map((k) => {
+                const v = s[k]
+                if (!v) return null
+                return (
+                  <span
+                    key={k}
+                    className={cn(
+                      'h-full',
+                      k === 'ok' && 'bg-emerald-500',
+                      k === 'err' && 'bg-red-500',
+                      k === 'unknown' && 'bg-muted-foreground/40'
+                    )}
+                    style={{ width: `${(v / s.total) * 100}%` }}
+                    title={`${k === 'ok' ? '在线' : k === 'err' ? '离线' : '未探测'} ${v} 个`}
+                  />
+                )
+              })}
+            </div>
+            <span className="w-40 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+              {s.total} 个模型 · 在线 {s.ok} · 离线 {s.err}
+              {s.unknown > 0 ? ` · 未探测 ${s.unknown}` : ''}
+            </span>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  )
+}
+
+/** 延迟概览：区间 P50 / P95 / 平均总耗时 + 平均总耗时趋势 */
+function LatencyOverviewPanel({
+  range,
+  onRangeChange,
+  stats,
+  rows,
+  wrap,
+}: {
+  range: RangeKey
+  onRangeChange: (v: string) => void
+  stats: { p50: number | null; p95: number | null; avg: number | null }
+  rows: Row[]
+  wrap: ReturnType<typeof useElementWidth>
+}) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+        <div>
+          <CardTitle className="text-base">延迟概览</CardTitle>
+          <p className="text-xs text-muted-foreground">所有启用模型 · 总耗时统计与趋势</p>
+        </div>
+        <Select value={range} onValueChange={onRangeChange}>
+          <SelectTrigger className="h-8 w-[104px]" aria-label="延迟概览时间范围">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {RANGE_OPTIONS.map((o) => (
+              <SelectItem key={o.value} value={o.value}>
+                {o.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </CardHeader>
+      <CardContent>
+        <div className="mb-4 grid grid-cols-3 gap-3">
+          {(['P50', 'P95', '平均'] as const).map((label, i) => {
+            const v = [stats.p50, stats.p95, stats.avg][i]
+            return (
+              <div key={label} className="rounded-lg border bg-accent/30 px-3 py-2">
+                <p className="text-xs text-muted-foreground">{label} 总耗时</p>
+                <p className="text-glow font-mono text-xl font-semibold tabular-nums">{fmtMs(v)}</p>
+              </div>
+            )
+          })}
+        </div>
+        {rows.length === 0 ? (
+          <p className="py-10 text-center text-sm text-muted-foreground">所选时间范围内暂无探测数据</p>
+        ) : (
+          <div ref={wrap.ref} style={{ height: 220 }}>
+            {wrap.width > 0 ? (
+              <AreaChart
+                width={wrap.width}
+                height={220}
+                data={rows}
+                margin={{ top: 4, right: 12, bottom: 0, left: -10 }}
+              >
+                <defs>
+                  <linearGradient id="latencyFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={CHART_COLORS[0]} stopOpacity={0.35} />
+                    <stop offset="100%" stopColor={CHART_COLORS[0]} stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis
+                  dataKey="time"
+                  tickFormatter={(v: string) => fmtTimeTick(v, range)}
+                  minTickGap={48}
+                  tick={{ fontSize: 11 }}
+                  stroke="hsl(var(--muted-foreground))"
+                />
+                <YAxis
+                  tick={{ fontSize: 11 }}
+                  stroke="hsl(var(--muted-foreground))"
+                  width={48}
+                  tickFormatter={(v: number) => (v >= 1000 ? `${Math.round(v / 100) / 10}s` : `${v}ms`)}
+                />
+                <Tooltip
+                  contentStyle={TOOLTIP_STYLE}
+                  labelFormatter={(v) => fmtTimeTick(String(v), range)}
+                  formatter={(value) => [fmtMs(Number(value)), '平均总耗时']}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="ms"
+                  name="平均总耗时"
+                  stroke={CHART_COLORS[0]}
+                  strokeWidth={2}
+                  fill="url(#latencyFill)"
+                  dot={false}
+                  connectNulls
+                />
+              </AreaChart>
+            ) : null}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+/** 最近探测记录折叠状态：false=展开（默认），localStorage 持久化 */
+const RECENT_COLLAPSED_KEY = 'dashboard.recent.collapsed'
+
+function loadRecentCollapsed(): boolean {
+  try {
+    const raw = localStorage.getItem(RECENT_COLLAPSED_KEY)
+    return raw === 'true' || raw === '1'
+  } catch {
+    return false
+  }
+}
+
+/** 最近探测记录：全局最新 12 条（成功/失败都算），可折叠，入口跳转探测记录页 */
+function RecentRecordsPanel({
+  items,
+  modelById,
+}: {
+  items: ProbeResult[]
+  modelById: Map<number, ModelWithLatest>
+}) {
+  const [collapsed, setCollapsed] = useState(loadRecentCollapsed)
+  const toggle = (next: boolean) => {
+    setCollapsed(next)
+    persist(RECENT_COLLAPSED_KEY, next)
+  }
+  return (
+    <Collapsible open={!collapsed} onOpenChange={(v) => toggle(!v)}>
+      <Card className="gap-3 py-4">
+        <div className="flex items-center gap-1 px-4">
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent/40"
+              aria-expanded={!collapsed}
+            >
+              <ChevronDown
+                className={cn('size-4 shrink-0 text-muted-foreground transition-transform', collapsed && '-rotate-90')}
+              />
+              <CardTitle className="text-base">最近探测记录</CardTitle>
+              <span className="shrink-0 text-xs text-muted-foreground">最近 24 小时 · 最新 12 条</span>
+            </button>
+          </CollapsibleTrigger>
+          <Button asChild variant="ghost" size="sm" className="shrink-0 text-muted-foreground">
+            <Link to="/records">
+              查看全部 <ArrowRight className="size-3.5" />
+            </Link>
+          </Button>
+        </div>
+        <CollapsibleContent>
+          <CardContent className="px-4">
+            {items.length === 0 ? (
+              <p className="py-4 text-center text-sm text-muted-foreground">暂无探测记录</p>
+            ) : (
+              <ul className="divide-y divide-border">
+            {items.map((p) => {
+              const m = p.model_id != null ? modelById.get(p.model_id) : undefined
+              return (
+                <li
+                  key={p.id ?? `${p.model_id}_${p.created_at}`}
+                  className="flex items-center gap-3 py-2.5"
+                >
+                  <span
+                    className={cn(
+                      'size-2 shrink-0 rounded-full',
+                      p.status === 'ok' ? 'dot-glow bg-emerald-500 text-emerald-500' : 'bg-red-500 text-red-500'
+                    )}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm">
+                      {m ? modelName(m) : `模型 #${p.model_id}`}
+                      <span className="ml-2 text-xs text-muted-foreground">{m?.provider_name}</span>
+                    </p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {p.status === 'ok'
+                        ? `TPS ${fmtTps(p.tps)} · 首字 ${fmtMs(p.ttft_ms)} · 总耗时 ${fmtMs(p.total_ms)}`
+                        : `失败：${ERROR_TYPE_LABELS[p.error_type ?? ''] ?? p.error_type ?? '未知'} · ${p.error_message ?? ''}`}
+                    </p>
+                  </div>
+                  {p.status === 'ok' && p.valid === 0 ? (
+                    <Badge
+                      variant="outline"
+                      className="shrink-0 border-amber-500/50 text-amber-600 dark:text-amber-400"
+                      title={invalidTpsTitle(p.total_ms, p.ttft_ms)}
+                    >
+                      测量异常
+                    </Badge>
+                  ) : null}
+                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                    {timeAgo(p.created_at)}
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+            )}
+          </CardContent>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
+  )
+}
+
 export function DashboardPage() {
   const [range, setRange] = useState<RangeKey>(loadRange)
   const [hiddenIds, setHiddenIds] = useState<Set<number>>(() => loadHiddenIds(HIDDEN_STORAGE_KEY))
@@ -245,12 +604,14 @@ export function DashboardPage() {
   const [rawProbes, setRawProbes] = useState<RawProbes>({})
   const [tpsRange, setTpsRange] = useState<RangeKey>(() => loadTrendRange('dashboard.trend.tps.range'))
   const [ttftRange, setTtftRange] = useState<RangeKey>(() => loadTrendRange('dashboard.trend.ttft.range'))
+  const [latencyRange, setLatencyRange] = useState<RangeKey>(() => loadTrendRange('dashboard.latency.range'))
   const [tpsHidden, setTpsHidden] = useState<Set<number>>(() => loadHiddenIds('dashboard.trend.tps.hidden'))
   const [ttftHidden, setTtftHidden] = useState<Set<number>>(() => loadHiddenIds('dashboard.trend.ttft.hidden'))
   const [collapsedGroups, setCollapsedGroups] = useState<Set<number>>(loadCollapsedGroups)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [probing, setProbing] = useState<Set<number>>(new Set())
+  const [recentProbes, setRecentProbes] = useState<ProbeResult[]>([])
 
   const load = useCallback(
     async (silent = false) => {
@@ -264,9 +625,10 @@ export function DashboardPage() {
         if (!ids.length) {
           setSummaries({})
           setRawProbes({})
+          setRecentProbes([])
           return
         }
-        const [sumRes, probeRes] = await Promise.all([
+        const [sumRes, probeRes, recentRes] = await Promise.all([
           Promise.all(ids.map((id) => api.modelSummary(id, range).catch(() => null))),
           Promise.all(
             ids.map((id) =>
@@ -275,6 +637,8 @@ export function DashboardPage() {
                 .catch(() => ({ total: 0, items: [] }))
             )
           ),
+          // 全局最近记录（成功/失败都算），最多取 40 条再裁剪到 12 条展示
+          api.listProbes({ range: '24h', order: 'desc', limit: 40 }).catch(() => ({ total: 0, items: [] })),
         ])
         const sm: Record<number, Summary | null> = {}
         sumRes.forEach((s, i) => {
@@ -287,6 +651,11 @@ export function DashboardPage() {
           raw[ids[i]] = pr.items.filter((p) => p.valid === 1)
         })
         setRawProbes(raw)
+
+        const idSet = new Set(ids)
+        setRecentProbes(
+          recentRes.items.filter((p) => p.model_id != null && idSet.has(p.model_id)).slice(0, 12)
+        )
       } catch (e) {
         toast.error(`加载失败：${(e as Error).message}`)
       } finally {
@@ -372,6 +741,15 @@ export function DashboardPage() {
     }
   }
 
+  const changeLatencyRange = (v: string) => {
+    setLatencyRange(v as RangeKey)
+    try {
+      localStorage.setItem('dashboard.latency.range', v)
+    } catch {
+      /* ignore */
+    }
+  }
+
   /** 供应商分组（models 已按 provider/模型 id 排序，按序分组） */
   const providerGroups = useMemo(() => {
     const map = new Map<number, { id: number; name: string; enabled: number; items: ModelWithLatest[] }>()
@@ -396,6 +774,43 @@ export function DashboardPage() {
     })
   }
 
+  const modelById = useMemo(() => new Map(models.map((m) => [m.id, m])), [models])
+
+  /** 统计卡口径：最近一次探测成功 = 在线，失败或尚未探测都计入离线（总数守恒） */
+  const statCounts = useMemo(() => {
+    let online = 0
+    let offline = 0
+    for (const m of models) {
+      const latest = m.latest ?? summaries[m.id]?.latest ?? null
+      if (latest?.status === 'ok') online += 1
+      else offline += 1
+    }
+    return { total: models.length, online, offline }
+  }, [models, summaries])
+
+  /** 模型状态分布：沿用供应商分组的顺序，仅统计启用模型 */
+  const providerStats = useMemo(
+    () =>
+      providerGroups.map((g) => {
+        let ok = 0
+        let err = 0
+        let unknown = 0
+        for (const m of g.items) {
+          const latest = m.latest ?? summaries[m.id]?.latest ?? null
+          if (latest?.status === 'ok') ok += 1
+          else if (latest?.status === 'error') err += 1
+          else unknown += 1
+        }
+        return { id: g.id, name: g.name, total: g.items.length, ok, err, unknown }
+      }),
+    [providerGroups, summaries]
+  )
+
+  /** 延迟概览：区间聚合 + 时间桶趋势 */
+  const latencyStats = useMemo(() => latencyAggregates(rawProbes, latencyRange), [rawProbes, latencyRange])
+  const latencyRows = useMemo(() => buildLatencyRows(rawProbes, latencyRange), [rawProbes, latencyRange])
+  const latencyWrap = useElementWidth()
+
   const hasCompare = compareData.length > 0
   const hasOkData = useMemo(() => Object.values(rawProbes).some((arr) => arr.length > 0), [rawProbes])
   const tpsRows = useMemo(() => buildTrendRows(rawProbes, 'tps', tpsRange), [rawProbes, tpsRange])
@@ -406,7 +821,7 @@ export function DashboardPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-tech-gradient text-xl font-bold tracking-tight">仪表盘</h1>
-          <p className="text-sm text-muted-foreground">模型输出效率总览，每 30 秒自动刷新</p>
+          <p className="text-sm text-muted-foreground">模型状态、延迟与趋势总览，每 30 秒自动刷新</p>
         </div>
         <div className="flex items-center gap-2">
           <Tabs
@@ -458,6 +873,18 @@ export function DashboardPage() {
         </Card>
       ) : (
         <>
+          {/* 概览区：统计卡 → 模型状态分布（置顶）→ 延迟概览 → 最近探测记录 */}
+          <StatCards total={statCounts.total} online={statCounts.online} offline={statCounts.offline} />
+          <StatusDistributionPanel stats={providerStats} />
+          <LatencyOverviewPanel
+            range={latencyRange}
+            onRangeChange={changeLatencyRange}
+            stats={latencyStats}
+            rows={latencyRows}
+            wrap={latencyWrap}
+          />
+          <RecentRecordsPanel items={recentProbes} modelById={modelById} />
+
           {/* 模型对比：横向条形图，一眼看出谁快谁慢 */}
           <Card>
             <CardHeader>
