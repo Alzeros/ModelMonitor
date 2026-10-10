@@ -14,7 +14,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { ChevronDown, Loader2, PauseCircle, Play, Plus, RefreshCw, Timer } from 'lucide-react'
+import { ChevronDown, Loader2, Play, Plus, RefreshCw, Timer } from 'lucide-react'
 import { api } from '@/lib/api'
 import { colorForIndex, fmtMs, fmtTps, fmtTimeTick, invalidTpsTitle, timeAgo } from '@/lib/format'
 import {
@@ -258,9 +258,9 @@ export function DashboardPage() {
       try {
         const { items } = await api.listModels()
         // 已停用的供应商整体不进入仪表盘（分组/对比/趋势/请求都基于此过滤）
-        const active = items.filter((m) => m.provider_enabled === 1)
+        const active = items.filter((m) => m.provider_enabled === 1 && m.enabled === 1)
         setModels(active)
-        const ids = items.map((m) => m.id)
+        const ids = active.map((m) => m.id)
         if (!ids.length) {
           setSummaries({})
           setRawProbes({})
@@ -447,7 +447,7 @@ export function DashboardPage() {
         <Card>
           <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
             <p className="text-sm text-muted-foreground">
-              暂无启用中的供应商和模型（可在「模型管理」页添加或启用）
+              暂无启用中的模型（可在「模型管理」页添加或启用）
             </p>
             <Button asChild>
               <Link to="/models">
@@ -557,7 +557,7 @@ export function DashboardPage() {
               const stats = summaries[m.id]?.stats
               const isProbing = probing.has(m.id)
               return (
-                <Card key={m.id} className={cn('gap-3', !m.enabled && 'opacity-60')}>
+                <Card key={m.id} className="gap-3">
                   <CardHeader className="pb-1">
                     <div className="flex min-w-0 items-center gap-2">
                       <span
@@ -574,12 +574,6 @@ export function DashboardPage() {
                       >
                         {modelName(m)}
                       </CardTitle>
-                      {!m.enabled || !m.provider_enabled ? (
-                        <Badge variant="secondary" className="shrink-0">
-                          <PauseCircle className="size-3" />
-                          {!m.provider_enabled ? '供应商停用' : '已停用'}
-                        </Badge>
-                      ) : null}
                     </div>
                     <p className="truncate text-xs text-muted-foreground">{m.provider_name}</p>
                   </CardHeader>
