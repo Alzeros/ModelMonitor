@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 import {
@@ -40,6 +40,16 @@ import {
   type RangeKey,
   type Summary,
 } from '@/lib/types'
+import {
+  SECTION_STORAGE_KEY,
+  depsSignature,
+  loadHiddenSections,
+  neededDeps,
+  parseDeps,
+  visibleSectionIds,
+  type SectionId,
+} from '@/lib/dashboard-sections'
+import { SectionToggles } from '@/components/section-toggles'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -66,6 +76,31 @@ const TOOLTIP_STYLE = {
   border: '1px solid hsl(var(--border))',
   borderRadius: 8,
   fontSize: 12,
+}
+
+/** 区块依赖的数据还没拉回来时的占位，区别于「已加载但确实没数据」 */
+function SectionSkeleton({ className }: { className?: string }) {
+  return <Skeleton className={cn('rounded-xl', className)} />
+}
+
+/**
+ * 区块门控。不开就整块不渲染 —— 不是 CSS 隐藏：隐藏会把图表挂在宽度为 0 的容器上。
+ * ready=false 表示该区块依赖的数据源还没拉，此时用骨架占位。
+ */
+function SectionGate({
+  on,
+  ready = true,
+  skeleton,
+  children,
+}: {
+  on: boolean
+  ready?: boolean
+  skeleton?: ReactNode
+  children: ReactNode
+}) {
+  if (!on) return null
+  if (!ready) return <>{skeleton ?? <SectionSkeleton />}</>
+  return <>{children}</>
 }
 
 /** 各时间范围的时间桶粒度（毫秒）：不同模型的探测时刻不同，聚合到同一时间轴折线才能对齐 */
@@ -608,14 +643,37 @@ export function DashboardPage() {
   const [tpsHidden, setTpsHidden] = useState<Set<number>>(() => loadHiddenIds('dashboard.trend.tps.hidden'))
   const [ttftHidden, setTtftHidden] = useState<Set<number>>(() => loadHiddenIds('dashboard.trend.ttft.hidden'))
   const [collapsedGroups, setCollapsedGroups] = useState<Set<number>>(loadCollapsedGroups)
+  // 区块显示开关：存的是「被隐藏」的 id，新增区块默认可见
+  const [hiddenSections, setHiddenSections] = useState<Set<SectionId>>(loadHiddenSections)
+  // 依赖数据源的「已就绪」标记：区分「还没拉」与「拉到了但没数据」
+  const [summariesReady, setSummariesReady] = useState(false)
+  const [probesReady, setProbesReady] = useState(false)
+  const [recentReady, setRecentReady] = useState(false)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [probing, setProbing] = useState<Set<number>>(new Set())
   const [recentProbes, setRecentProbes] = useState<ProbeResult[]>([])
 
+  /** 可见区块集合：渲染门控与按需取数都读它 */
+  const visibleSections = useMemo(() => visibleSectionIds(hiddenSections), [hiddenSections])
+  /** 本次需要请求的数据源。以签名为依赖，切换 needs 为空的区块不会触发取数 */
+  const depSig = useMemo(() => depsSignature(neededDeps(visibleSections)), [visibleSections])
+  const needed = useMemo(() => parseDeps(depSig), [depSig])
+  const show = useCallback((id: SectionId) => visibleSections.has(id), [visibleSections])
+  /** 顶部时间范围的 range 只喂给 summaries；两者都不可见时它是没有作用的死控件 */
+  const showRangeTabs = visibleSections.has('compare') || visibleSections.has('providers')
+
+  const changeSections = useCallback((next: Set<SectionId>) => {
+    setHiddenSections(next)
+    persist(SECTION_STORAGE_KEY, [...next])
+  }, [])
+
   const load = useCallback(
     async (silent = false) => {
       if (!silent) setRefreshing(true)
+      const wantSummaries = needed.has('summaries')
+      const wantProbes = needed.has('modelProbes')
+      const wantRecent = needed.has('recentProbes')
       try {
         const { items } = await api.listModels()
         // 已停用的供应商整体不进入仪表盘（分组/对比/趋势/请求都基于此过滤）
@@ -626,36 +684,58 @@ export function DashboardPage() {
           setSummaries({})
           setRawProbes({})
           setRecentProbes([])
+          setSummariesReady(true)
+          setProbesReady(true)
+          setRecentReady(true)
           return
         }
+        // 只为「有可见区块需要」的数据源发请求：关掉的区块不产生任何网络开销
         const [sumRes, probeRes, recentRes] = await Promise.all([
-          Promise.all(ids.map((id) => api.modelSummary(id, range).catch(() => null))),
-          Promise.all(
-            ids.map((id) =>
+          wantSummaries
+            ? Promise.all(ids.map((id) => api.modelSummary(id, range).catch(() => null)))
+            : Promise.resolve(null),
+          wantProbes
+            ? Promise.all(
+                ids.map((id) =>
+                  api
+                    .listProbes({ model_id: id, range: '24h', status: 'ok', order: 'asc', limit: 1000 })
+                    .catch(() => ({ total: 0, items: [] }))
+                )
+              )
+            : Promise.resolve(null),
+          wantRecent
+            ? // 全局最近记录（成功/失败都算），最多取 40 条再裁剪到 12 条展示
               api
-                .listProbes({ model_id: id, range: '24h', status: 'ok', order: 'asc', limit: 1000 })
+                .listProbes({ range: '24h', order: 'desc', limit: 40 })
                 .catch(() => ({ total: 0, items: [] }))
-            )
-          ),
-          // 全局最近记录（成功/失败都算），最多取 40 条再裁剪到 12 条展示
-          api.listProbes({ range: '24h', order: 'desc', limit: 40 }).catch(() => ({ total: 0, items: [] })),
+            : Promise.resolve(null),
         ])
-        const sm: Record<number, Summary | null> = {}
-        sumRes.forEach((s, i) => {
-          sm[ids[i]] = s
-        })
-        setSummaries(sm)
 
-        const raw: RawProbes = {}
-        probeRes.forEach((pr, i) => {
-          raw[ids[i]] = pr.items.filter((p) => p.valid === 1)
-        })
-        setRawProbes(raw)
+        if (sumRes) {
+          const sm: Record<number, Summary | null> = {}
+          sumRes.forEach((s, i) => {
+            sm[ids[i]] = s
+          })
+          setSummaries(sm)
+          setSummariesReady(true)
+        }
 
-        const idSet = new Set(ids)
-        setRecentProbes(
-          recentRes.items.filter((p) => p.model_id != null && idSet.has(p.model_id)).slice(0, 12)
-        )
+        if (probeRes) {
+          const raw: RawProbes = {}
+          probeRes.forEach((pr, i) => {
+            raw[ids[i]] = pr.items.filter((p) => p.valid === 1)
+          })
+          setRawProbes(raw)
+          setProbesReady(true)
+        }
+
+        if (recentRes) {
+          const idSet = new Set(ids)
+          setRecentProbes(
+            recentRes.items.filter((p) => p.model_id != null && idSet.has(p.model_id)).slice(0, 12)
+          )
+          setRecentReady(true)
+        }
       } catch (e) {
         toast.error(`加载失败：${(e as Error).message}`)
       } finally {
@@ -663,11 +743,11 @@ export function DashboardPage() {
         setLoading(false)
       }
     },
-    [range]
+    [range, needed]
   )
 
+  // 首屏骨架只在首次加载出现：切换时间范围 / 开关区块时静默重取，不整页闪骨架
   useEffect(() => {
-    setLoading(true)
     void load(true)
   }, [load])
 
@@ -812,9 +892,11 @@ export function DashboardPage() {
   const latencyWrap = useElementWidth()
 
   const hasCompare = compareData.length > 0
-  const hasOkData = useMemo(() => Object.values(rawProbes).some((arr) => arr.length > 0), [rawProbes])
   const tpsRows = useMemo(() => buildTrendRows(rawProbes, 'tps', tpsRange), [rawProbes, tpsRange])
   const ttftRows = useMemo(() => buildTrendRows(rawProbes, 'ttft', ttftRange), [rawProbes, ttftRange])
+
+  const tpsVisible = show('trend-tps')
+  const ttftVisible = show('trend-ttft')
 
   return (
     <div className="space-y-6">
@@ -824,25 +906,28 @@ export function DashboardPage() {
           <p className="text-sm text-muted-foreground">模型状态、延迟与趋势总览，每 30 秒自动刷新</p>
         </div>
         <div className="flex items-center gap-2">
-          <Tabs
-            value={range}
-            onValueChange={(v) => {
-              setRange(v as RangeKey)
-              try {
-                localStorage.setItem(RANGE_STORAGE_KEY, v)
-              } catch {
-                /* ignore */
-              }
-            }}
-          >
-            <TabsList>
-              {RANGE_OPTIONS.map((o) => (
-                <TabsTrigger key={o.value} value={o.value}>
-                  {o.label}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
+          {showRangeTabs ? (
+            <Tabs
+              value={range}
+              onValueChange={(v) => {
+                setRange(v as RangeKey)
+                try {
+                  localStorage.setItem(RANGE_STORAGE_KEY, v)
+                } catch {
+                  /* ignore */
+                }
+              }}
+            >
+              <TabsList>
+                {RANGE_OPTIONS.map((o) => (
+                  <TabsTrigger key={o.value} value={o.value}>
+                    {o.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+          ) : null}
+          <SectionToggles hidden={hiddenSections} onChange={changeSections} />
           <Button variant="outline" size="icon" onClick={() => void load()} aria-label="刷新">
             <RefreshCw className={cn('size-4', refreshing && 'animate-spin')} />
           </Button>
@@ -871,21 +956,51 @@ export function DashboardPage() {
             </Button>
           </CardContent>
         </Card>
+      ) : visibleSections.size === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+            <p className="text-sm text-muted-foreground">
+              所有区块已隐藏，可用「显示区块」按需开启。
+            </p>
+            <SectionToggles hidden={hiddenSections} onChange={changeSections} />
+          </CardContent>
+        </Card>
       ) : (
         <>
           {/* 概览区：统计卡 → 模型状态分布（置顶）→ 延迟概览 → 最近探测记录 */}
-          <StatCards total={statCounts.total} online={statCounts.online} offline={statCounts.offline} />
-          <StatusDistributionPanel stats={providerStats} />
-          <LatencyOverviewPanel
-            range={latencyRange}
-            onRangeChange={changeLatencyRange}
-            stats={latencyStats}
-            rows={latencyRows}
-            wrap={latencyWrap}
-          />
-          <RecentRecordsPanel items={recentProbes} modelById={modelById} />
+          <SectionGate on={show('stats')}>
+            <StatCards total={statCounts.total} online={statCounts.online} offline={statCounts.offline} />
+          </SectionGate>
+          <SectionGate on={show('status')}>
+            <StatusDistributionPanel stats={providerStats} />
+          </SectionGate>
+          <SectionGate
+            on={show('latency')}
+            ready={probesReady}
+            skeleton={<SectionSkeleton className="h-72" />}
+          >
+            <LatencyOverviewPanel
+              range={latencyRange}
+              onRangeChange={changeLatencyRange}
+              stats={latencyStats}
+              rows={latencyRows}
+              wrap={latencyWrap}
+            />
+          </SectionGate>
+          <SectionGate
+            on={show('recent')}
+            ready={recentReady}
+            skeleton={<SectionSkeleton className="h-40" />}
+          >
+            <RecentRecordsPanel items={recentProbes} modelById={modelById} />
+          </SectionGate>
 
           {/* 模型对比：横向条形图，一眼看出谁快谁慢 */}
+          <SectionGate
+            on={show('compare')}
+            ready={summariesReady}
+            skeleton={<SectionSkeleton className="h-72" />}
+          >
           <Card>
             <CardHeader>
               <CardTitle className="text-base">模型对比 · 平均输出速度（tok/s）</CardTitle>
@@ -940,8 +1055,10 @@ export function DashboardPage() {
               </div>
             </CardContent>
           </Card>
+          </SectionGate>
 
           {/* 卡片墙：按供应商分组，点击组头折叠/展开 */}
+          <SectionGate on={show('providers')}>
           <div className="space-y-3">
             {providerGroups.map((g) => {
               const open = !collapsedGroups.has(g.id)
@@ -1096,10 +1213,15 @@ export function DashboardPage() {
               )
             })}
           </div>
+          </SectionGate>
 
-          {/* 趋势图 */}
-          {hasOkData ? (
-            <div className="grid gap-4 lg:grid-cols-2">
+          {/* 趋势图：两张各自可开关；只有都可见时才用双列，单张占满整行 */}
+          {tpsVisible || ttftVisible ? (
+            !probesReady ? (
+              <SectionSkeleton className="h-80" />
+            ) : (
+            <div className={cn('grid gap-4', tpsVisible && ttftVisible && 'lg:grid-cols-2')}>
+              {tpsVisible ? (
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0">
                   <CardTitle className="text-base">输出速度趋势（tok/s）</CardTitle>
@@ -1166,7 +1288,9 @@ export function DashboardPage() {
                 </div>
                 </CardContent>
               </Card>
+              ) : null}
 
+              {ttftVisible ? (
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0">
                   <CardTitle className="text-base">首字时间趋势（TTFT）</CardTitle>
@@ -1241,7 +1365,9 @@ export function DashboardPage() {
                 </div>
                 </CardContent>
               </Card>
+              ) : null}
             </div>
+            )
           ) : null}
         </>
       )}

@@ -5,3 +5,5 @@ data/
 .DS_Store
 Thumbs.db
 .codebuddy/
+docs/
+.dsh-acl-recovery
