@@ -103,7 +103,12 @@ function round2(n) {
 function summarize(rows) {
   const total = rows.length;
   const okRows = rows.filter((r) => r.status === 'ok');
-  const tps = okRows.map((r) => r.tps).filter((v) => v != null).sort((a, b) => a - b);
+  // 速度类指标只统计可信样本。tps 异常时会被置空从而隐式过滤，
+  // 但 avg_tps 不会，必须显式按 valid 过滤，否则缓存样本会污染聚合。
+  const validRows = okRows.filter((r) => r.valid === 1);
+  const tps = validRows.map((r) => r.tps).filter((v) => v != null).sort((a, b) => a - b);
+  const avgTps = validRows.map((r) => r.avg_tps).filter((v) => Number.isFinite(v)).sort((a, b) => a - b);
+  // 首字/总耗时与速度可信度无关，沿用全部成功样本
   const ttft = okRows.map((r) => r.ttft_ms).filter((v) => v != null).sort((a, b) => a - b);
   const totalMs = okRows.map((r) => r.total_ms).filter((v) => v != null).sort((a, b) => a - b);
   const avg = (arr) => (arr.length ? round2(arr.reduce((s, v) => s + v, 0) / arr.length) : null);
@@ -112,6 +117,8 @@ function summarize(rows) {
     ok_count: okRows.length,
     error_count: total - okRows.length,
     success_rate: total ? Math.round((okRows.length / total) * 1000) / 10 : null,
+    // 主指标：端到端吞吐（completion_tokens / total_ms，含思考 token 与首字时间）
+    avg_tps: { count: avgTps.length, avg: avg(avgTps), p50: round2(percentile(avgTps, 0.5)), p95: round2(percentile(avgTps, 0.95)), max: avgTps.length ? avgTps[avgTps.length - 1] : null },
     tps: { avg: avg(tps), p50: round2(percentile(tps, 0.5)), p95: round2(percentile(tps, 0.95)), max: tps.length ? tps[tps.length - 1] : null },
     ttft_ms: { avg: avg(ttft), p50: percentile(ttft, 0.5) != null ? Math.round(percentile(ttft, 0.5)) : null, p95: percentile(ttft, 0.95) != null ? Math.round(percentile(ttft, 0.95)) : null },
     total_ms: { avg: avg(totalMs) },

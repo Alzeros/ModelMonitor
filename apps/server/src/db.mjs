@@ -12,6 +12,17 @@ db.pragma('journal_mode = WAL');
 
 export const DEFAULT_PROMPT = 'Say "hello" and nothing else.';
 
+/**
+ * 端到端吞吐（avg_tps = completion_tokens / total_ms）的物理上限，超出即判定为异常。
+ *
+ * 定这个值的依据（对现有库 1068 条 ok 记录实测）：
+ *   - 可信样本(valid=1) 的 avg_tps: p99=204, max=631，超过 1000 的有 0 条
+ *   - 各"干净"模型实测上限约 190
+ *   - 缓存命中 / 批量重放样本普遍在 1000 以上（最高 12244）
+ * 即：1000 对正常数据零误伤，但能挡住缓存类污染。
+ */
+export const AVG_TPS_MAX = 1000;
+
 // ---------- 建表与迁移（v2：供应商 → 模型 两级结构） ----------
 
 function migrate() {
@@ -172,6 +183,22 @@ migrate();
         db.exec(`ALTER TABLE probe_results ADD COLUMN ${col} ${def}`);
       }
     }
+  }
+}
+
+// 主指标切换为 avg_tps 后的历史回填。幂等，可重复执行。
+{
+  const rcols = db.prepare('PRAGMA table_info(probe_results)').all().map((c) => c.name);
+  if (rcols.includes('avg_tps')) {
+    // 1) 吞吐超出物理上限的（缓存命中 / 汇总回放）清空数值
+    db.exec(
+      `UPDATE probe_results SET avg_tps = NULL
+       WHERE status = 'ok' AND avg_tps IS NOT NULL AND avg_tps > ${AVG_TPS_MAX}`
+    );
+    // 2) valid 的语义改为「端到端吞吐 avg_tps 是否可信」。
+    //    status='ok' 已隐含「拿到了可见输出」（prober 仅在 firstContentTs !== null 时返回 ok），
+    //    因此只需看 avg_tps 是否存在。旧的「可见输出窗口 >=100ms」判据不再参与。
+    db.exec(`UPDATE probe_results SET valid = CASE WHEN avg_tps IS NULL THEN 0 ELSE 1 END WHERE status = 'ok'`);
   }
 }
 

@@ -96,6 +96,9 @@ export interface SummaryStats {
   ok_count: number
   error_count: number
   success_rate: number | null
+  /** 主指标：端到端吞吐（completion_tokens / total_ms，含思考 token 与首字时间） */
+  avg_tps: MetricStats & { count: number }
+  /** 次要指标：可见输出速度（排除首字与思考阶段） */
   tps: MetricStats
   ttft_ms: MetricStats
   total_ms: MetricStats

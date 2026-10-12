@@ -167,7 +167,7 @@ export function RecordsPage() {
                 <TableHead>时间</TableHead>
                 <TableHead>模型</TableHead>
                 <TableHead>状态</TableHead>
-                <TableHead>输出 T/s</TableHead>
+                <TableHead title="（思考 token + 可见 token）÷ 完整请求耗时">整体吞吐（含思考，tok/s）</TableHead>
                 <TableHead className="hidden sm:table-cell">首字</TableHead>
                 <TableHead className="hidden sm:table-cell">总耗时</TableHead>
                 <TableHead className="hidden md:table-cell">可见 tok</TableHead>
@@ -210,8 +210,8 @@ export function RecordsPage() {
                     <TableCell>
                       {p.status === 'ok' ? (
                         p.valid === 0 ? (
-                          <Badge variant="outline" className="border-amber-500/50 text-amber-600 dark:text-amber-400" title={invalidTpsTitle(p.total_ms, p.ttft_ms)}>
-                            异常
+                          <Badge variant="outline" className="border-amber-500/50 text-amber-600 dark:text-amber-400" title={invalidTpsTitle()}>
+                            吞吐待复测
                           </Badge>
                         ) : (
                           <Badge variant="outline" className="border-emerald-500/50 text-emerald-600 dark:text-emerald-400">
@@ -227,7 +227,7 @@ export function RecordsPage() {
                     <TableCell className="tabular-nums">
                       {p.status === 'ok' ? (
                         <span>
-                          {fmtTps(p.tps)}
+                          {fmtTps(p.avg_tps)}
                           {p.estimated === 1 ? (
                             <span className="ml-1 text-xs text-muted-foreground" title="服务未返回 usage，按分块数估算">
                               ~

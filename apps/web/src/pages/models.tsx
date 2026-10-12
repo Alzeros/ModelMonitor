@@ -328,7 +328,7 @@ export function ModelsPage() {
     try {
       const r = await api.probeModel(id)
       if (r.status === 'ok') {
-        toast.success(`${name}：${fmtTps(r.tps)} tokens/s，首字 ${fmtMs(r.ttft_ms)}`)
+        toast.success(`${name}：${fmtTps(r.avg_tps)} tokens/s，首字 ${fmtMs(r.ttft_ms)}`)
       } else {
         toast.error(
           `探测失败（${ERROR_TYPE_LABELS[r.error_type ?? ''] ?? r.error_type}）：${r.error_message}`
@@ -490,7 +490,7 @@ export function ModelsPage() {
                       <TableHeader>
                         <TableRow>
                           <TableHead>模型</TableHead>
-                          <TableHead>最新 TPS</TableHead>
+                          <TableHead title="（思考 token + 可见 token）÷ 完整请求耗时">最新整体吞吐（含思考）</TableHead>
                           <TableHead className="hidden sm:table-cell">首字</TableHead>
                           <TableHead className="hidden md:table-cell">上次探测</TableHead>
                           <TableHead>启用</TableHead>
@@ -532,12 +532,12 @@ export function ModelsPage() {
                             <TableCell>
                               {m.latest?.status === 'ok' ? (
                                 m.latest.valid === 0 ? (
-                                  <Badge variant="outline" className="border-amber-500/50 text-amber-600 dark:text-amber-400" title={invalidTpsTitle(m.latest.total_ms, m.latest.ttft_ms)}>
-                                    异常
+                                  <Badge variant="outline" className="border-amber-500/50 text-amber-600 dark:text-amber-400" title={invalidTpsTitle()}>
+                                    吞吐待复测
                                   </Badge>
                                 ) : (
                                   <span className="font-medium tabular-nums">
-                                    {fmtTps(m.latest.tps)}
+                                    {fmtTps(m.latest.avg_tps)}
                                   </span>
                                 )
                               ) : m.latest?.status === 'error' ? (

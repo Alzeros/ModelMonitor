@@ -1,4 +1,4 @@
-import { DEFAULT_PROMPT, insertProbeResult } from './db.mjs';
+import { AVG_TPS_MAX, DEFAULT_PROMPT, insertProbeResult } from './db.mjs';
 import { randomBytes } from 'node:crypto';
 
 /** 由 base_url 计算实际请求地址；兼容用户直接粘贴完整接口地址的情况 */
@@ -192,15 +192,21 @@ async function runProbe(model) {
 
     const outputTps = contentTokens > 0 && contentDurMs > 0 ? round2(contentTokens / (contentDurMs / 1000)) : null;
     const reasoningTps = reasoningTokens > 0 && reasoningDurMs > 0 ? round2(reasoningTokens / (reasoningDurMs / 1000)) : null;
-    const avgTps = completionTokens > 0 ? round2(completionTokens / (totalMs / 1000)) : null;
+    // avg_tps 是主指标：含思考 token 与首字时间，因此不受「网关缓冲后批量重放」影响
+    // （那种情况下 total_ms 已经把重放时间算进去，不会像 tps 那样被放大）。
+    const avgTpsRaw = completionTokens > 0 ? round2(completionTokens / (totalMs / 1000)) : null;
+    // 但缓存命中会让 total_ms 塌缩、avg_tps 虚高，所以仍需物理上限兜底
+    const avgTps = avgTpsRaw != null && avgTpsRaw <= AVG_TPS_MAX ? avgTpsRaw : null;
 
-    // 有效性判定：输出阶段过短(<100ms)或 tps 超出物理上限(>5000)视为异常——tps 置空、valid=0
-    const isValid =
-      firstContentTs !== null &&
-      contentDurMs >= 100 &&
-      outputTps != null &&
-      Number.isFinite(outputTps) &&
-      outputTps <= 5000;
+    // tps（可见输出速度，次要指标）是否可信：输出阶段过短或速率超上限，
+    // 都说明可见输出不是逐步流式推送的（多为网关缓冲后整包回放），该值不可用。
+    const tpsTrustworthy =
+      contentDurMs >= 100 && outputTps != null && Number.isFinite(outputTps) && outputTps <= 5000;
+
+    // valid 的语义：主指标 avg_tps 是否可信。
+    // 只要拿到了可见输出、且吞吐在物理范围内，就是一条可用样本 ——
+    // 可见输出的推送窗口不再参与判定（换口径的初衷正是让批量回放的样本也能用）。
+    const isValid = firstContentTs !== null && avgTps != null;
     const valid = isValid ? 1 : 0;
 
     const base = {
@@ -232,7 +238,7 @@ async function runProbe(model) {
       };
     }
 
-    return { status: 'ok', ...base, tps: isValid ? outputTps : null, avg_tps: avgTps, error_type: null, error_message: null };
+    return { status: 'ok', ...base, tps: tpsTrustworthy ? outputTps : null, avg_tps: avgTps, error_type: null, error_message: null };
   } catch (err) {
     if (timedOut || err?.name === 'AbortError' || err?.name === 'TimeoutError') {
       return fail('timeout', `请求超时（${timeoutMs}ms）`);

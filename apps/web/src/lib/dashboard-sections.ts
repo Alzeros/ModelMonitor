@@ -37,11 +37,11 @@ export interface SectionMeta {
 export const DASHBOARD_SECTIONS: readonly SectionMeta[] = [
   { id: 'stats', label: '统计卡', hint: '总计 / 在线 / 离线模型数', group: '概览', needs: [] },
   { id: 'status', label: '模型状态分布', hint: '按供应商的在线 / 离线堆叠条', group: '概览', needs: [] },
-  { id: 'compare', label: '模型对比', hint: '平均输出速度横向条形图', group: '概览', needs: ['summaries'] },
+  { id: 'compare', label: '模型对比', hint: '含思考 token 的区间中位吞吐横向条形图', group: '概览', needs: ['summaries'] },
   { id: 'providers', label: '供应商卡片墙', hint: '按供应商分组的模型卡片', group: '概览', needs: ['summaries'] },
   { id: 'latency', label: '延迟概览', hint: 'P50 / P95 / 平均总耗时与趋势', group: '概览', needs: ['modelProbes'] },
   { id: 'recent', label: '最近探测记录', hint: '最近 24 小时最新 12 条', group: '概览', needs: ['recentProbes'] },
-  { id: 'trend-tps', label: '输出速度趋势', hint: '各模型输出速度（tok/s）折线', group: '趋势', needs: ['modelProbes'] },
+  { id: 'trend-tps', label: '整体吞吐趋势', hint: '含思考 token 的整体吞吐（tok/s）折线', group: '趋势', needs: ['modelProbes'] },
   { id: 'trend-ttft', label: '首字时间趋势', hint: '各模型首字时间（TTFT）折线', group: '趋势', needs: ['modelProbes'] },
 ]
 

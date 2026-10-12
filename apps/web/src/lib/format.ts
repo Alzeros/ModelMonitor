@@ -11,15 +11,14 @@ export function fmtMs(ms: number | null | undefined): string {
   return `${(ms / 1000).toFixed(2)} s`
 }
 
-/** 测量异常（valid=0）的悬停说明：按成因区分 */
-export function invalidTpsTitle(totalMs: number | null | undefined, ttftMs: number | null | undefined): string {
-  if (totalMs != null && ttftMs != null) {
-    const dur = totalMs - ttftMs
-    if (dur < 100) {
-      return `输出阶段仅 ${dur}ms —— 网关疑似整包缓冲/缓存回放（非真实流式转发），测速无意义，已排除出统计`
-    }
-  }
-  return '测得速度超出物理上限（网关疑汇总/缓存数据），已排除出统计'
+/**
+ * 测量异常（valid=0）的悬停说明。
+ *
+ * 吞吐缺失或超过当前经验阈值时建议复测，不据此推断缓存命中或其他具体原因。
+ * 可见输出窗口过短不再影响 valid —— 那种样本的吞吐是可信的，只是 `tps` 字段会为空。
+ */
+export function invalidTpsTitle(): string {
+  return '整体吞吐数据缺失，或超过当前经验阈值（1000 tok/s）；暂不纳入统计，建议复测。该提示不代表已确认具体原因。'
 }
 
 export function fmtTokens(n: number | null | undefined): string {

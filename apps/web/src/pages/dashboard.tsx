@@ -197,7 +197,7 @@ function useElementWidth() {
 type RawProbes = Record<number, ProbeResult[]>
 
 /** 把探测记录按指标与时间桶聚合：同桶内取平均值，让多模型折线在时间轴上对齐 */
-function buildTrendRows(probes: RawProbes, prefix: 'tps' | 'ttft', rk: RangeKey): Row[] {
+function buildTrendRows(probes: RawProbes, prefix: 'rate' | 'ttft', rk: RangeKey): Row[] {
   const bucketMs = BUCKET_MS[rk]
   const since = Date.now() - RANGE_MS[rk]
   type Acc = { t: number; sums: Record<string, { s: number; c: number }> }
@@ -205,7 +205,7 @@ function buildTrendRows(probes: RawProbes, prefix: 'tps' | 'ttft', rk: RangeKey)
   for (const arr of Object.values(probes)) {
     for (const p of arr) {
       if (p.valid === 0) continue
-      const v = prefix === 'tps' ? p.tps : p.ttft_ms
+      const v = prefix === 'rate' ? p.avg_tps : p.ttft_ms
       if (v == null) continue
       const t0 = new Date(p.created_at).getTime()
       if (t0 < since) continue
@@ -602,7 +602,7 @@ function RecentRecordsPanel({
                     </p>
                     <p className="truncate text-xs text-muted-foreground">
                       {p.status === 'ok'
-                        ? `TPS ${fmtTps(p.tps)} · 首字 ${fmtMs(p.ttft_ms)} · 总耗时 ${fmtMs(p.total_ms)}`
+                        ? `吞吐 ${fmtTps(p.avg_tps)} · 首字 ${fmtMs(p.ttft_ms)} · 总耗时 ${fmtMs(p.total_ms)}`
                         : `失败：${ERROR_TYPE_LABELS[p.error_type ?? ''] ?? p.error_type ?? '未知'} · ${p.error_message ?? ''}`}
                     </p>
                   </div>
@@ -610,9 +610,9 @@ function RecentRecordsPanel({
                     <Badge
                       variant="outline"
                       className="shrink-0 border-amber-500/50 text-amber-600 dark:text-amber-400"
-                      title={invalidTpsTitle(p.total_ms, p.ttft_ms)}
+                      title={invalidTpsTitle()}
                     >
-                      测量异常
+                      吞吐待复测
                     </Badge>
                   ) : null}
                   <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
@@ -762,7 +762,7 @@ export function DashboardPage() {
       try {
         const r = await api.probeModel(id)
         if (r.status === 'ok') {
-          toast.success(`探测成功：${fmtTps(r.tps)} tok/s，首字 ${fmtMs(r.ttft_ms)}`)
+          toast.success(`探测成功：${fmtTps(r.avg_tps)} tok/s，首字 ${fmtMs(r.ttft_ms)}`)
         } else {
           toast.error(
             `探测失败（${ERROR_TYPE_LABELS[r.error_type ?? ''] ?? r.error_type}）：${r.error_message}`
@@ -782,17 +782,17 @@ export function DashboardPage() {
     [load]
   )
 
-  /** 模型对比数据：勾选的模型按所选时间范围的平均输出速度，降序排列 */
+  /** 模型对比数据：勾选的模型按所选时间范围的吞吐中位数（p50），降序排列 */
   const compareData = useMemo(() => {
-    const list: { name: string; tps: number; color: string }[] = []
+    const list: { name: string; rate: number; count: number; color: string }[] = []
     models.forEach((m, i) => {
       if (hiddenIds.has(m.id)) return
-      const avg = summaries[m.id]?.stats.tps.avg
-      if (avg != null) {
-        list.push({ name: modelName(m), tps: avg, color: colorForIndex(i) })
+      const p50 = summaries[m.id]?.stats.avg_tps?.p50
+      if (p50 != null) {
+        list.push({ name: modelName(m), rate: p50, count: summaries[m.id]?.stats.avg_tps?.count ?? 0, color: colorForIndex(i) })
       }
     })
-    return list.sort((a, b) => b.tps - a.tps)
+    return list.sort((a, b) => b.rate - a.rate)
   }, [models, summaries, hiddenIds])
 
   const toggleCompare = makeToggle(setHiddenIds, HIDDEN_STORAGE_KEY)
@@ -892,7 +892,7 @@ export function DashboardPage() {
   const latencyWrap = useElementWidth()
 
   const hasCompare = compareData.length > 0
-  const tpsRows = useMemo(() => buildTrendRows(rawProbes, 'tps', tpsRange), [rawProbes, tpsRange])
+  const tpsRows = useMemo(() => buildTrendRows(rawProbes, 'rate', tpsRange), [rawProbes, tpsRange])
   const ttftRows = useMemo(() => buildTrendRows(rawProbes, 'ttft', ttftRange), [rawProbes, ttftRange])
 
   const tpsVisible = show('trend-tps')
@@ -1003,7 +1003,7 @@ export function DashboardPage() {
           >
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">模型对比 · 平均输出速度（tok/s）</CardTitle>
+              <CardTitle className="text-base">模型对比 · 整体吞吐中位数（含思考，tok/s）</CardTitle>
             </CardHeader>
             <CardContent>
               <ModelChips models={models} hidden={hiddenIds} onToggle={toggleCompare} />
@@ -1036,15 +1036,15 @@ export function DashboardPage() {
                     />
                     <Tooltip
                       contentStyle={TOOLTIP_STYLE}
-                      formatter={(v: number) => [`${fmtTps(v)} tok/s`, '平均输出速度']}
+                      formatter={(v: number, _name, item) => [`${fmtTps(v)} tok/s · ${item.payload.count} 次有效样本`, '整体吞吐（含思考）']}
                       cursor={{ fill: 'hsl(var(--accent))', opacity: 0.35 }}
                     />
-                    <Bar dataKey="tps" radius={[0, 4, 4, 0]} maxBarSize={22}>
+                    <Bar dataKey="rate" radius={[0, 4, 4, 0]} maxBarSize={22}>
                       {compareData.map((d) => (
                         <Cell key={d.name} fill={d.color} />
                       ))}
                       <LabelList
-                        dataKey="tps"
+                        dataKey="rate"
                         position="right"
                         formatter={(v: number) => fmtTps(v)}
                         style={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
@@ -1125,21 +1125,26 @@ export function DashboardPage() {
                     {latest ? (
                       latest.status === 'ok' ? (
                         <div>
-                          <div className="flex items-baseline gap-1.5">
+                          <div className="flex flex-wrap items-baseline gap-1.5">
                             {latest.valid === 0 ? (
                               <Badge
                                 variant="outline"
                                 className="border-amber-500/50 text-amber-600 dark:text-amber-400"
-                                title={invalidTpsTitle(latest.total_ms, latest.ttft_ms)}
+                                title={invalidTpsTitle()}
                               >
-                                测量异常
+                                吞吐待复测
                               </Badge>
                             ) : (
                               <>
                                 <span className="text-glow font-mono text-2xl font-semibold tabular-nums">
-                                  {fmtTps(latest.tps)}
+                                  {fmtTps(stats?.avg_tps?.p50 ?? latest.avg_tps)}
                                 </span>
-                                <span className="text-xs text-muted-foreground">输出 tok/s</span>
+                                <span className="text-xs text-muted-foreground">
+                                  整体吞吐（含思考）tok/s
+                                  {stats?.avg_tps?.p50 != null
+                                    ? ` · ${range} 中位 · ${stats.avg_tps.count ?? 0} 次有效样本`
+                                    : ' · 最近一次 · 1 次有效样本'}
+                                </span>
                                 {latest.estimated === 1 ? (
                                   <Badge variant="secondary" className="text-[10px]">
                                     估算
@@ -1224,9 +1229,9 @@ export function DashboardPage() {
               {tpsVisible ? (
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0">
-                  <CardTitle className="text-base">输出速度趋势（tok/s）</CardTitle>
+                  <CardTitle className="text-base">整体吞吐趋势（含思考，tok/s）</CardTitle>
                   <Select value={tpsRange} onValueChange={changeTpsRange}>
-                    <SelectTrigger className="h-8 w-[104px]" aria-label="输出速度趋势时间范围">
+                    <SelectTrigger className="h-8 w-[104px]" aria-label="吞吐趋势时间范围">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1274,7 +1279,7 @@ export function DashboardPage() {
                             <Line
                               key={m.id}
                               type="monotone"
-                              dataKey={`tps_${m.id}`}
+                              dataKey={`rate_${m.id}`}
                               name={modelName(m)}
                               stroke={colorForIndex(i)}
                               strokeWidth={2}
