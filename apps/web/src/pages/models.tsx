@@ -417,7 +417,7 @@ export function ModelsPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-tech-gradient text-xl font-bold tracking-tight">模型管理</h1>
+          <h1 className="text-xl font-semibold tracking-tight">模型管理</h1>
           <p className="text-sm text-muted-foreground">
             供应商（OpenAI 兼容接入点）→ 模型；探测参数跟随供应商，模型可批量添加
           </p>

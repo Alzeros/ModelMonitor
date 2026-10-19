@@ -26,7 +26,7 @@ export type Theme = 'dark' | 'light' | 'system'
 type Resolved = 'dark' | 'light'
 
 const STORAGE_KEY = 'theme'
-const DEFAULT_THEME: Theme = 'dark'
+const DEFAULT_THEME: Theme = 'light'
 const MEDIA_DARK = '(prefers-color-scheme: dark)'
 
 interface ThemeCtx {

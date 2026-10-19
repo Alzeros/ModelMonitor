@@ -29,36 +29,38 @@ function ThemeToggle() {
 export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-svh bg-background">
-      <header className="panel-glass sticky top-0 z-40 border-b border-border/60">
-        {/* 顶栏扫描线：青→紫渐变 */}
-        <div className="scanline absolute inset-x-0 top-0" aria-hidden />
-        <div className="mx-auto flex h-14 max-w-7xl items-center gap-6 px-4">
-          <div className="flex items-center gap-2.5">
-            <span className="relative grid size-7 place-items-center rounded-md border border-primary/30 bg-primary/10 shadow-glow">
+      <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur-md">
+        <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-4 sm:gap-6">
+          <div className="flex shrink-0 items-center gap-2.5">
+            <span className="grid size-7 place-items-center rounded-md border border-primary/25 bg-primary/10">
               <Activity className="size-4 text-primary" />
             </span>
-            <span className="text-tech-gradient text-[15px] font-bold tracking-tight">ModelMonitor</span>
+            {/* 窄屏隐藏品牌文字，给导航留出空间 */}
+            <span className="hidden text-[15px] font-semibold tracking-tight sm:inline">
+              ModelMonitor
+            </span>
           </div>
-          <nav className="flex items-center gap-1">
+          <nav className="flex shrink-0 items-center gap-1">
             {NAV.map(({ to, label, icon: Icon, end }) => (
               <NavLink
                 key={to}
                 to={to}
                 end={end}
+                title={label}
                 className={({ isActive }) =>
                   cn(
-                    'flex cursor-pointer items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors duration-200 hover:bg-accent/70 hover:text-foreground',
-                    isActive &&
-                      'bg-primary/10 font-medium text-primary shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.25)]'
+                    'flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 text-sm text-muted-foreground transition-colors duration-200 hover:bg-accent hover:text-foreground sm:px-3',
+                    isActive && 'bg-primary/10 font-medium text-primary'
                   )
                 }
               >
-                <Icon className="size-4" />
-                {label}
+                <Icon className="size-4 shrink-0" />
+                {/* 窄屏只留图标，宽屏才显示文字 */}
+                <span className="hidden sm:inline">{label}</span>
               </NavLink>
             ))}
           </nav>
-          <div className="ml-auto">
+          <div className="ml-auto shrink-0">
             <ThemeToggle />
           </div>
         </div>

@@ -338,8 +338,8 @@ function buildLatencyRows(probes: RawProbes, rk: RangeKey): Row[] {
 function StatCards({ total, online, offline }: { total: number; online: number; offline: number }) {
   const items = [
     { label: '总计模型', value: total, icon: Layers, tone: 'text-primary', sub: '启用中的模型' },
-    { label: '在线模型', value: online, icon: CircleCheck, tone: 'text-emerald-500', sub: '最近一次探测成功' },
-    { label: '离线模型', value: offline, icon: CircleX, tone: 'text-red-500', sub: '探测失败或未探测' },
+    { label: '在线模型', value: online, icon: CircleCheck, tone: 'text-emerald-600', sub: '最近一次探测成功' },
+    { label: '离线模型', value: offline, icon: CircleX, tone: 'text-red-600', sub: '探测失败或未探测' },
   ] as const
   return (
     <div className="grid gap-4 sm:grid-cols-3">
@@ -353,7 +353,7 @@ function StatCards({ total, online, offline }: { total: number; online: number; 
             </span>
             <div className="min-w-0">
               <p className="text-xs text-muted-foreground">{it.label}</p>
-              <p className="text-glow font-mono text-2xl font-semibold leading-tight tabular-nums">{it.value}</p>
+              <p className="font-mono text-2xl font-semibold leading-tight tabular-nums">{it.value}</p>
               <p className="truncate text-[11px] text-muted-foreground/70">{it.sub}</p>
             </div>
           </CardContent>
@@ -378,11 +378,11 @@ function StatusDistributionPanel({
         </div>
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
           <span className="flex items-center gap-1">
-            <span className="size-2 rounded-full bg-emerald-500" />
+            <span className="size-2 rounded-full bg-emerald-600" />
             在线
           </span>
           <span className="flex items-center gap-1">
-            <span className="size-2 rounded-full bg-red-500" />
+            <span className="size-2 rounded-full bg-red-600" />
             离线
           </span>
           <span className="flex items-center gap-1">
@@ -406,8 +406,8 @@ function StatusDistributionPanel({
                     key={k}
                     className={cn(
                       'h-full',
-                      k === 'ok' && 'bg-emerald-500',
-                      k === 'err' && 'bg-red-500',
+                      k === 'ok' && 'bg-emerald-600',
+                      k === 'err' && 'bg-red-600',
                       k === 'unknown' && 'bg-muted-foreground/40'
                     )}
                     style={{ width: `${(v / s.total) * 100}%` }}
@@ -468,7 +468,7 @@ function LatencyOverviewPanel({
             return (
               <div key={label} className="rounded-lg border bg-accent/30 px-3 py-2">
                 <p className="text-xs text-muted-foreground">{label} 总耗时</p>
-                <p className="text-glow font-mono text-xl font-semibold tabular-nums">{fmtMs(v)}</p>
+                <p className="font-mono text-xl font-semibold tabular-nums">{fmtMs(v)}</p>
               </div>
             )
           })}
@@ -490,7 +490,7 @@ function LatencyOverviewPanel({
                     <stop offset="100%" stopColor={CHART_COLORS[0]} stopOpacity={0.02} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <CartesianGrid stroke="hsl(var(--border))" />
                 <XAxis
                   dataKey="time"
                   tickFormatter={(v: string) => fmtTimeTick(v, range)}
@@ -592,7 +592,7 @@ function RecentRecordsPanel({
                   <span
                     className={cn(
                       'size-2 shrink-0 rounded-full',
-                      p.status === 'ok' ? 'dot-glow bg-emerald-500 text-emerald-500' : 'bg-red-500 text-red-500'
+                      p.status === 'ok' ? 'bg-emerald-600' : 'bg-red-600'
                     )}
                   />
                   <div className="min-w-0 flex-1">
@@ -902,7 +902,7 @@ export function DashboardPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-tech-gradient text-xl font-bold tracking-tight">仪表盘</h1>
+          <h1 className="text-xl font-semibold tracking-tight">仪表盘</h1>
           <p className="text-sm text-muted-foreground">模型状态、延迟与趋势总览，每 30 秒自动刷新</p>
         </div>
         <div className="flex items-center gap-2">
@@ -1021,7 +1021,7 @@ export function DashboardPage() {
                   layout="vertical"
                   margin={{ top: 4, right: 56, bottom: 0, left: 4 }}
                 >
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" horizontal={false} />
+                    <CartesianGrid stroke="hsl(var(--border))" horizontal={false} />
                     <XAxis
                       type="number"
                       tick={{ fontSize: 11 }}
@@ -1081,13 +1081,13 @@ export function DashboardPage() {
                         <span className="ml-auto flex shrink-0 items-center gap-2 text-xs tabular-nums text-muted-foreground">
                           {okCount > 0 ? (
                             <span className="flex items-center gap-1">
-                              <span className="dot-glow size-2 rounded-full bg-emerald-500 text-emerald-500" />
+                              <span className="size-2 rounded-full bg-emerald-600" />
                               {okCount}
                             </span>
                           ) : null}
                           {errCount > 0 ? (
                             <span className="flex items-center gap-1">
-                              <span className="dot-glow size-2 rounded-full bg-red-500 text-red-500" />
+                              <span className="size-2 rounded-full bg-red-600" />
                               {errCount}
                             </span>
                           ) : null}
@@ -1106,9 +1106,9 @@ export function DashboardPage() {
                     <div className="flex min-w-0 items-center gap-2">
                       <span
                         className={cn(
-                          'dot-glow size-2 shrink-0 rounded-full animate-status-breath',
-                          latest?.status === 'ok' && 'bg-emerald-500 text-emerald-500',
-                          latest?.status === 'error' && 'bg-red-500 text-red-500',
+                          'size-2 shrink-0 rounded-full',
+                          latest?.status === 'ok' && 'bg-emerald-600 text-emerald-600',
+                          latest?.status === 'error' && 'bg-red-600 text-red-600',
                           !latest && 'bg-muted-foreground/40 text-muted-foreground'
                         )}
                       />
@@ -1136,7 +1136,7 @@ export function DashboardPage() {
                               </Badge>
                             ) : (
                               <>
-                                <span className="text-glow font-mono text-2xl font-semibold tabular-nums">
+                                <span className="font-mono text-2xl font-semibold tabular-nums">
                                   {fmtTps(stats?.avg_tps?.p50 ?? latest.avg_tps)}
                                 </span>
                                 <span className="text-xs text-muted-foreground">
@@ -1260,7 +1260,7 @@ export function DashboardPage() {
                     data={tpsRows}
                     margin={{ top: 4, right: 12, bottom: 0, left: -10 }}
                   >
-                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                        <CartesianGrid stroke="hsl(var(--border))" />
                         <XAxis
                           dataKey="time"
                           tickFormatter={(v: string) => fmtTimeTick(v, tpsRange)}
@@ -1329,7 +1329,7 @@ export function DashboardPage() {
                     data={ttftRows}
                     margin={{ top: 4, right: 12, bottom: 0, left: -10 }}
                   >
-                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                        <CartesianGrid stroke="hsl(var(--border))" />
                         <XAxis
                           dataKey="time"
                           tickFormatter={(v: string) => fmtTimeTick(v, ttftRange)}
