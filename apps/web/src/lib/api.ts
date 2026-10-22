@@ -1,3 +1,4 @@
+import { authHeader } from './auth'
 import type {
   ListProbesParams,
   ModelRow,
@@ -11,10 +12,25 @@ import type {
   Summary,
 } from './types'
 
+/** 认证失效事件名：登录页据此切回登录界面 */
+export const AUTH_EXPIRED_EVENT = 'modelmonitor:auth-expired'
+
+export class ApiError extends Error {
+  readonly status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
     ...init,
-    headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,
+    headers: {
+      ...authHeader(),
+      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+    },
   })
   if (!res.ok) {
     let msg = `HTTP ${res.status}`
@@ -25,7 +41,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       /* ignore */
     }
-    throw new Error(msg)
+    // 401：令牌缺失或失效 —— 通知上层切回登录页
+    if (res.status === 401) {
+      window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT))
+    }
+    throw new ApiError(msg, res.status)
   }
   return (await res.json()) as T
 }
@@ -69,6 +89,13 @@ export const api = {
 
   listRemoteModels: (body: { base_url: string; api_key: string }) =>
     request<{ items: string[]; url: string }>('/models-list', { method: 'POST', body: JSON.stringify(body) }),
+
+  /**
+   * 用「已保存的」供应商密钥拉取模型列表。
+   * 密钥留在服务端，不经浏览器 —— 编辑态与「添加模型」都走这个接口。
+   */
+  listRemoteModelsForProvider: (providerId: number) =>
+    request<{ items: string[]; url: string }>(`/providers/${providerId}/models-list`, { method: 'POST' }),
 
   // 指标与设置
   modelSummary: (id: number, range: RangeKey) =>

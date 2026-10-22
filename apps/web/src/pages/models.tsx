@@ -103,7 +103,8 @@ function toProviderForm(p: Provider): ProviderFormState {
   return {
     name: p.name,
     base_url: p.base_url,
-    api_key: p.api_key,
+    // 密钥明文不再下发；留空表示「不修改」，由后端保留原值
+    api_key: '',
     prompt: p.prompt,
     max_tokens: String(p.max_tokens),
     timeout_ms: String(p.timeout_ms),
@@ -241,8 +242,17 @@ export function ModelsPage() {
     setTesting(true)
     setTestResult(null)
     try {
-      const r = await api.listRemoteModels({ base_url: pform.base_url.trim(), api_key: pform.api_key })
-      setTestResult({ ok: true, count: r.items.length })
+      // 编辑态：改用库里已保存的密钥（浏览器拿不到明文）
+      if (editingProvider) {
+        const r = await api.listRemoteModelsForProvider(editingProvider.id)
+        setTestResult({ ok: true, count: r.items.length })
+      } else {
+        const r = await api.listRemoteModels({
+          base_url: pform.base_url.trim(),
+          api_key: pform.api_key,
+        })
+        setTestResult({ ok: true, count: r.items.length })
+      }
     } catch (e) {
       setTestResult({ ok: false, message: (e as Error).message })
     } finally {
@@ -278,7 +288,8 @@ export function ModelsPage() {
     setListError(null)
     setRemoteList(null)
     try {
-      const r = await api.listRemoteModels({ base_url: addFor.base_url, api_key: addFor.api_key })
+      // 用库里已保存的密钥（浏览器拿不到明文）
+      const r = await api.listRemoteModelsForProvider(addFor.id)
       setRemoteList(r.items)
       if (!r.items.length) setListError('服务返回了空列表')
     } catch (e) {
@@ -669,9 +680,17 @@ export function ModelsPage() {
                 type="password"
                 value={pform.api_key}
                 onChange={(e) => setField('api_key', e.target.value)}
-                placeholder="本地服务可留空"
+                placeholder={
+                  editingProvider?.has_api_key ? '留空表示不修改' : '本地服务可留空'
+                }
                 autoComplete="off"
               />
+              {editingProvider?.has_api_key ? (
+                <p className="text-xs text-muted-foreground">
+                  已保存：<code className="font-mono">{editingProvider.api_key_masked}</code>
+                  （出于安全考虑不显示明文，留空即保持不变）
+                </p>
+              ) : null}
             </div>
 
             <div className="grid gap-2">

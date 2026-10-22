@@ -15,12 +15,20 @@ export const RANGE_MS: Record<RangeKey, number> = {
   '24h': 86_400_000,
 }
 
-/** 供应商：OpenAI 兼容接入点，探测参数挂在供应商上 */
+/**
+ * 供应商：OpenAI 兼容接入点，探测参数挂在供应商上。
+ *
+ * 注意：api_key 明文不再由后端返回，只回传 api_key_masked 与 has_api_key。
+ * 编辑表单中 api_key 留空表示「不修改」，由后端保留原值。
+ */
 export interface Provider {
   id: number
   name: string
   base_url: string
-  api_key: string
+  /** 密钥掩码（如 sk-1••••••abcd），仅供展示 */
+  api_key_masked: string
+  /** 是否已配置密钥 */
+  has_api_key: boolean
   prompt: string
   max_tokens: number
   timeout_ms: number

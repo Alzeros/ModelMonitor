@@ -6,11 +6,15 @@ import fastifyStatic from '@fastify/static';
 import { db } from './db.mjs';
 import { registerRoutes } from './routes.mjs';
 import { reloadScheduler, stopScheduler } from './scheduler.mjs';
+import { assertAuthConfigured, createAuthGuard } from './auth.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.resolve(__dirname, '../../web/dist');
 
 const app = Fastify({ logger: false, bodyLimit: 2 * 1024 * 1024 });
+
+// 认证守卫：拦截未授权的 /api 请求。必须在路由注册之前挂载。
+app.addHook('onRequest', createAuthGuard());
 
 if (fs.existsSync(distDir)) {
   await app.register(fastifyStatic, {
@@ -43,6 +47,7 @@ await registerRoutes(app);
 
 const port = Number(process.env.PORT) || 3000;
 const host = process.env.HOST ?? '127.0.0.1';
+assertAuthConfigured(host);
 await app.listen({ port, host });
 console.log(`[server] API ready at http://${host}:${port}`);
 if (fs.existsSync(distDir)) {

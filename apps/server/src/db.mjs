@@ -204,8 +204,33 @@ migrate();
 
 // ---------- 供应商 ----------
 
+/**
+ * 供应商列表（对外视图）：不含 api_key 明文。
+ *
+ * 只回传 api_key_masked（首尾各留 4 位，中间以 • 代替）与 has_api_key 标志。
+ * 前端编辑时若把密钥留空即表示「不修改」，因此无需把明文回传给浏览器。
+ */
 export function listProviders() {
-  return db.prepare('SELECT * FROM providers ORDER BY id').all();
+  return db
+    .prepare(
+      `SELECT id, name, base_url, prompt, max_tokens, timeout_ms, interval_minutes,
+              probe_gap_ms, enabled, created_at, updated_at, api_key
+       FROM providers ORDER BY id`
+    )
+    .all()
+    .map(({ api_key, ...rest }) => ({
+      ...rest,
+      api_key_masked: maskApiKey(api_key),
+      has_api_key: Boolean(api_key),
+    }));
+}
+
+/** 密钥掩码：保留首尾各 4 位；过短的密钥整体隐藏 */
+export function maskApiKey(key) {
+  const s = typeof key === 'string' ? key : '';
+  if (!s) return '';
+  if (s.length <= 10) return '•'.repeat(Math.max(s.length, 4));
+  return `${s.slice(0, 4)}${'•'.repeat(6)}${s.slice(-4)}`;
 }
 
 export function getProvider(id) {

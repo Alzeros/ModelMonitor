@@ -29,13 +29,41 @@ npm run build      # 构建前端到 apps/web/dist
 npm start          # 生产模式：单进程托管前端 + API + 定时探测，访问 http://127.0.0.1:3000
 ```
 
+## 访问认证
+
+服务支持单一 **Bearer Token** 认证，令牌由环境变量 `AUTH_TOKEN` 定义：
+
+```bash
+# 生成一个高强度随机令牌
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+
+# 启动时带上令牌
+AUTH_TOKEN="你的随机令牌" HOST=0.0.0.0 npm start
+```
+
+启用后，**全部 `/api/*` 接口**都需要携带 `Authorization: Bearer <令牌>`，未授权请求返回 401；前端会显示登录页，输入令牌后进入。
+
+- **未设置 `AUTH_TOKEN` 时不启用认证**（仅建议本地使用），服务启动时会打印醒目告警
+- 令牌可用 `timingSafeEqual` 比对，长度不同直接拒绝
+- 令牌可随时轮换：改环境变量重启即可，前端旧令牌会在下次请求收到 401 时自动跳回登录页
+- **务必在前面加一层 HTTPS 反向代理**（Caddy / Nginx）：Bearer Token 走明文 HTTP 等同于裸奔
+
+### 密钥不外泄
+
+供应商 API Key **明文保存在本地 SQLite**，但**不会下发到浏览器**：
+
+- `GET /api/providers` 只返回 `api_key_masked`（如 `sk-R••••••OFep`）与 `has_api_key` 标志
+- 编辑供应商时密钥框留空表示「不修改」，后端保留原值
+- 「测试连接」与「获取模型列表」改用服务端已保存的密钥（`POST /api/providers/:id/models-list`），密钥全程不经过浏览器
+
 ## 环境变量（可选）
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `PORT` | `3000` | 服务端口 |
-| `HOST` | `127.0.0.1` | 监听地址（局域网访问改 `0.0.0.0`，注意无鉴权风险） |
+| `HOST` | `127.0.0.1` | 监听地址（局域网/公网访问改 `0.0.0.0`，**必须同时设置 `AUTH_TOKEN`**） |
 | `DATA_DIR` | `<repo>/data` | SQLite 数据目录 |
+| `AUTH_TOKEN` | 空 | 访问令牌。**为空 = 不启用认证**，公网部署务必设置 |
 
 ## 项目结构
 

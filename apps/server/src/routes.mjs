@@ -13,6 +13,7 @@ import {
   listModelsView,
   listProviders,
   listProbes,
+  maskApiKey,
   setSetting,
   updateModel,
   updateProvider,
@@ -88,6 +89,78 @@ function buildModelsUrl(base) {
   return `${b}/models`;
 }
 
+/**
+ * 供应商对外视图：剥离 api_key 明文，只留掩码与 has_api_key 标志。
+ * 单条查询（create/update 的返回值）也走这里，避免任何路径泄露明文密钥。
+ */
+function publicProvider(provider) {
+  if (!provider) return provider;
+  const { api_key, ...rest } = provider;
+  return {
+    ...rest,
+    api_key_masked: maskApiKey(api_key),
+    has_api_key: Boolean(api_key),
+  };
+}
+
+/**
+ * 拉取上游模型列表（OpenAI 兼容 GET {base}/models）。
+ *
+ * 抽成独立函数以便两个调用点复用：
+ * - POST /api/models-list（请求体自带 base_url + api_key，新增/编辑表单用）
+ * - POST /api/providers/:id/models-list（用库中已保存的密钥）
+ *
+ * 返回 { items, url } 或 { error, status }。
+ */
+async function fetchRemoteModels(base, key) {
+  if (!/^https?:\/\//i.test(base)) {
+    return { error: 'Base URL 必填且以 http(s):// 开头', status: 400 };
+  }
+  const candidates = [buildModelsUrl(base)];
+  if (!candidates[0].includes('/v1/')) {
+    candidates.push(candidates[0].replace(/\/models$/i, '/v1/models'));
+  }
+  let lastUrl = candidates[0];
+  let res;
+  try {
+    for (const url of candidates) {
+      lastUrl = url;
+      res = await fetch(url, {
+        headers: key ? { Authorization: `Bearer ${key}` } : {},
+        signal: AbortSignal.timeout(15000),
+      });
+      if (res.status === 404 || res.status === 405) continue;
+      break;
+    }
+  } catch (err) {
+    const cause = err?.cause?.code ?? err?.cause?.message;
+    return { error: `网络错误 @ ${lastUrl}${cause ? ` (${cause})` : ''}`, status: 502 };
+  }
+  if (!res.ok) {
+    const bodyText = await res.text().catch(() => '');
+    const msg = `HTTP ${res.status} ${res.statusText} @ ${lastUrl}${bodyText ? `: ${bodyText.slice(0, 300)}` : ''}`;
+    return { error: msg, status: res.status === 401 || res.status === 403 ? 401 : 502 };
+  }
+  const ct = res.headers.get('content-type') ?? '';
+  if (!ct.includes('json')) {
+    const bodyText = await res.text().catch(() => '');
+    return { error: `响应不是 JSON @ ${lastUrl}: ${bodyText.slice(0, 200)}`, status: 502 };
+  }
+  const data = await res.json().catch(() => null);
+  let items = [];
+  if (Array.isArray(data)) items = data;
+  else if (Array.isArray(data?.data)) items = data.data;
+  else if (Array.isArray(data?.models)) items = data.models;
+  if (!items.length) {
+    return { error: `未在响应中找到模型列表 @ ${lastUrl}`, status: 502 };
+  }
+  const ids = items
+    .map((m) => (typeof m === 'string' ? m : m?.id ?? m?.name ?? ''))
+    .filter((s) => typeof s === 'string' && s)
+    .sort((a, b) => a.localeCompare(b));
+  return { items: [...new Set(ids)], url: lastUrl };
+}
+
 function percentile(sorted, p) {
   if (!sorted.length) return null;
   const idx = (sorted.length - 1) * p;
@@ -132,21 +205,26 @@ export async function registerRoutes(app) {
   app.post('/api/providers', async (req, reply) => {
     const { out, errors } = parseProviderBody(req.body);
     if (errors.length) return reply.code(400).send({ errors });
-    return reply.code(201).send(createProvider(out));
+    return reply.code(201).send(publicProvider(createProvider(out)));
   });
 
   app.put('/api/providers/:id', async (req, reply) => {
     const id = Number(req.params.id);
     const existing = getProvider(id);
     if (!existing) return reply.code(404).send({ error: 'provider not found' });
-    const { out, errors } = parseProviderBody({ ...existing, ...req.body });
+    // 密钥留空表示「不修改」：前端不回传明文，只能靠这里的语义维持原值
+    const merged = { ...existing, ...req.body };
+    if (typeof req.body?.api_key === 'string' && req.body.api_key === '') {
+      merged.api_key = existing.api_key;
+    }
+    const { out, errors } = parseProviderBody(merged);
     if (errors.length) return reply.code(400).send({ errors });
     const provider = updateProvider(id, out);
     // 仅影响调度的变更才重建定时器（启停/探测间隔）；其它字段变更保持既有节拍
     if (Boolean(existing.enabled) !== Boolean(provider.enabled) || existing.interval_minutes !== provider.interval_minutes) {
       reloadScheduler();
     }
-    return provider;
+    return publicProvider(provider);
   });
 
   app.delete('/api/providers/:id', async (req, reply) => {
@@ -252,49 +330,27 @@ export async function registerRoutes(app) {
       return reply.code(400).send({ error: 'Base URL 必填且以 http(s):// 开头' });
     }
     const key = typeof b.api_key === 'string' ? b.api_key : '';
-    const candidates = [buildModelsUrl(base)];
-    if (!candidates[0].includes('/v1/')) {
-      candidates.push(candidates[0].replace(/\/models$/i, '/v1/models'));
+    const result = await fetchRemoteModels(base, key);
+    if (result.error) {
+      return reply.code(result.status).send({ error: result.error });
     }
-    let lastUrl = candidates[0];
-    let res;
-    try {
-      for (const url of candidates) {
-        lastUrl = url;
-        res = await fetch(url, {
-          headers: key ? { Authorization: `Bearer ${key}` } : {},
-          signal: AbortSignal.timeout(15000),
-        });
-        if (res.status === 404 || res.status === 405) continue;
-        break;
-      }
-    } catch (err) {
-      const cause = err?.cause?.code ?? err?.cause?.message;
-      return reply.code(502).send({ error: `网络错误 @ ${lastUrl}${cause ? ` (${cause})` : ''}` });
+    return result;
+  });
+
+  /**
+   * 用「已保存的」供应商密钥拉取模型列表。
+   *
+   * 密钥不再下发浏览器，因此「添加模型 → 获取列表」与编辑态的
+   * 「测试连接」都改走这个接口，由服务端读取库中的密钥去请求上游。
+   */
+  app.post('/api/providers/:id/models-list', async (req, reply) => {
+    const provider = getProvider(Number(req.params.id));
+    if (!provider) return reply.code(404).send({ error: 'provider not found' });
+    const result = await fetchRemoteModels(provider.base_url, provider.api_key);
+    if (result.error) {
+      return reply.code(result.status).send({ error: result.error });
     }
-    if (!res.ok) {
-      const bodyText = await res.text().catch(() => '');
-      const msg = `HTTP ${res.status} ${res.statusText} @ ${lastUrl}${bodyText ? `: ${bodyText.slice(0, 300)}` : ''}`;
-      return reply.code(res.status === 401 || res.status === 403 ? 401 : 502).send({ error: msg });
-    }
-    const ct = res.headers.get('content-type') ?? '';
-    if (!ct.includes('json')) {
-      const bodyText = await res.text().catch(() => '');
-      return reply.code(502).send({ error: `响应不是 JSON @ ${lastUrl}: ${bodyText.slice(0, 200)}` });
-    }
-    const data = await res.json().catch(() => null);
-    let items = [];
-    if (Array.isArray(data)) items = data;
-    else if (Array.isArray(data?.data)) items = data.data;
-    else if (Array.isArray(data?.models)) items = data.models;
-    if (!items.length) {
-      return reply.code(502).send({ error: `未在响应中找到模型列表 @ ${lastUrl}` });
-    }
-    const ids = items
-      .map((m) => (typeof m === 'string' ? m : m?.id ?? m?.name ?? ''))
-      .filter((s) => typeof s === 'string' && s)
-      .sort((a, b) => a.localeCompare(b));
-    return { items: [...new Set(ids)], url: lastUrl };
+    return result;
   });
 
   // ---------- 指标 ----------
